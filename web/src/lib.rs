@@ -1,5 +1,13 @@
 use pyo3::prelude::*;
 
+
+struct Slime{
+    
+}
+
+
+
+
 #[pymodule]
 mod web {
     use pyo3::prelude::*;

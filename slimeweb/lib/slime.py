@@ -36,16 +36,15 @@ class Slime:
         self,
         path: str = "/",
         method: str = "GET",
-        handler_view: Callable | None = None,
     ) -> Callable:
         def wrapper(route_handler) -> Callable:
-            if handler_view is None or not callable(handler_view):
+            if route_handler is None or not callable(route_handler):
                 raise ValueError(
                     f"View handler should be a function for [Path: {path}, Method: {method}]"
                 )
 
-            self.__routes[Routes(path, method)] = handler_view
-            return handler_view
+            self.__routes[Routes(path, method)] = route_handler
+            return route_handler
 
         return wrapper
 
