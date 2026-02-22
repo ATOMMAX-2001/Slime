@@ -11,6 +11,16 @@ class Routes:
         self.path: str = path
         self.method: str = method
 
+    def __hash__(self) -> int:
+        return hash((self.path, self.method))
+
+    def __eq__(self, value: object) -> bool:
+        return (
+            isinstance(value, Routes)
+            and self.path == value.path
+            and self.method == value.method
+        )
+
     def __str__(self) -> str:
         return f"""
             Path: {self.path}
@@ -48,5 +58,11 @@ class Slime:
 
         return wrapper
 
-    def serve(self, host: str = "localhost", port: int = 3000) -> None:
+    def _get_routes(self) -> Dict[Routes, Callable]:
+        return self.__routes
+
+    def serve(self, host: str = "127.0.0.1", port: int = 3000) -> None:
+        import web
+
+        web.init_web(self, host, port)
         print(f"Slime Server is running at {host}:{port}")
