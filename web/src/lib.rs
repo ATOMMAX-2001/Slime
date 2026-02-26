@@ -73,17 +73,12 @@ mod web {
                 if method == "GET" {
                     server_router = server_router.route(
                         &path,
-                        get(move || async move {
-                            let python_response = tokio::task::spawn_blocking(move || {
-                                return Python::attach(|py| {
-                                    let bound = handler.clone_ref(py);
-                                    let result = bound.call0(py)?;
-                                    let response_result = result.extract::<String>(py);
-                                    return response_result;
-                                });
-                            })
-                            .await
-                            .unwrap();
+                        get(move || async move {                            
+                            let python_response = Python::attach(|py| {
+                                let bound = handler.clone_ref(py);
+                                let result = bound.call0(py)?;
+                                return result.extract::<String>(py);
+                            });
                             match python_response {
                                 Ok(result) => (StatusCode::OK, result).into_response(),
                                 Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
@@ -99,8 +94,6 @@ mod web {
             let address: SocketAddr = format!("{}:{}", self.host, self.port).parse()?;
             let server_router = self.set_server_routes();
             let listener = TcpListener::bind(address).await.unwrap();
-            #[cfg(target_family = "unix")]
-            listener.set_reuseport(true);
 
             println!("Slime server is running at {}", address);
             let _ = axum::serve(listener, server_router)
@@ -123,7 +116,8 @@ mod web {
         let routes = slime_routes.cast::<PyDict>()?;
         let mut server = SlimeServer::new(host, port);
         server.load_routes(routes)?;
-        let runtime = Builder::new_multi_thread().enable_all().build()?;
+        let worker: usize = std::thread::available_parallelism().map(|num| num.get()).unwrap_or(1);
+        let runtime = Builder::new_multi_thread().worker_threads(worker).enable_all().build()?;
         py.detach(|| runtime.block_on(server.server_run()))?;
 
         return Ok(());

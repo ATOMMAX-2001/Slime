@@ -1,2 +1,5 @@
 .env/
 web/.*
+web/target/*
+slime.egg-info/
+*.pyc
