@@ -65,4 +65,5 @@ class Slime:
         import web
 
         web.init_web(self, host, port)
-        print(f"Slime Server is running at {host}:{port}")
+        print("Slime server is shutting down...")
+        print("Finished")
