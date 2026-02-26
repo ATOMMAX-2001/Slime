@@ -2,12 +2,15 @@ use pyo3::prelude::*;
 
 #[pymodule]
 mod web {
+    use axum::http::{Request, StatusCode};
+    use axum::response::IntoResponse;
     use axum::{Router, routing::get};
     use pyo3::{prelude::*, types::PyDict};
     use std::net::SocketAddr;
     use std::sync::Arc;
     use tokio::net::TcpListener;
     use tokio::runtime::Builder;
+    use tokio::signal;
 
     struct Route {
         path: String,
@@ -71,16 +74,21 @@ mod web {
                     server_router = server_router.route(
                         &path,
                         get(move || async move {
-                            return tokio::task::spawn_blocking(move || {
+                            let python_response = tokio::task::spawn_blocking(move || {
                                 return Python::attach(|py| {
                                     let bound = handler.clone_ref(py);
                                     let result = bound.call0(py)?;
-                                    return result.extract::<String>(py);
+                                    let response_result = result.extract::<String>(py);
+                                    return response_result;
                                 });
                             })
                             .await
-                            .unwrap()
                             .unwrap();
+                            match python_response {
+                                Ok(result) => (StatusCode::OK, result).into_response(),
+                                Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                                    .into_response(),
+                            }
                         }),
                     );
                 }
@@ -95,9 +103,17 @@ mod web {
             listener.set_reuseport(true);
 
             println!("Slime server is running at {}", address);
-            let _ = axum::serve(listener, server_router).await;
+            let _ = axum::serve(listener, server_router)
+                .with_graceful_shutdown(shutdown_server_signal())
+                .await;
             return Ok(());
         }
+    }
+
+    async fn shutdown_server_signal() {
+        signal::ctrl_c()
+            .await
+            .expect("Cant able to shutdown the server");
     }
 
     #[pyfunction]
@@ -108,7 +124,8 @@ mod web {
         let mut server = SlimeServer::new(host, port);
         server.load_routes(routes)?;
         let runtime = Builder::new_multi_thread().enable_all().build()?;
-        runtime.block_on(server.server_run())?;
+        py.detach(|| runtime.block_on(server.server_run()))?;
+
         return Ok(());
     }
 }
