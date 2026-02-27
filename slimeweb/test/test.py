@@ -4,12 +4,8 @@ app = slime.Slime(__file__)
 
 
 @app.route(path="/", method="GET")
-def hello(req):
-    print(req.method)
-    print(req.path)
-    print(req.header)
-    print(req.body)
-    return "Hello World"
+def hello(req, resp):
+    return resp.plain("Hello World")
 
 
 if __name__ == "__main__":
