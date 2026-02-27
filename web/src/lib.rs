@@ -1,15 +1,14 @@
 use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
-use bytes::Bytes;
+
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::PyDict;
 use rayon::ThreadPoolBuilder;
-use serde_json;
 
 use axum::{
     body::{Body, to_bytes},
-    http::{self, Request},
+    http::Request,
 };
-use pythonize::depythonize;
+
 use std::net::SocketAddr;
 use std::sync::{
     Arc,
@@ -19,6 +18,12 @@ use tokio::net::TcpListener;
 use tokio::runtime::Builder;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
+
+mod request;
+mod response;
+
+use request::SlimeRequest;
+use response::SlimeResponse;
 
 #[pymodule]
 mod web {
@@ -50,100 +55,11 @@ mod web {
             }
         }
     }
-    #[pyclass]
-    struct SlimeRequest {
-        uri: http::Uri,
-        method: http::Method,
-        header: Arc<http::HeaderMap>,
-        body: Bytes,
-    }
-    #[pymethods]
-    impl SlimeRequest {
-        #[getter]
-        fn method(&self) -> String {
-            return self.method.to_string();
-        }
-        #[getter]
-        fn path(&self) -> String {
-            return self.uri.to_string();
-        }
-
-        #[getter]
-        fn header<'py>(&self, py: Python<'py>) -> PyResult<Py<PyDict>> {
-            let req_header = PyDict::new(py);
-
-            for (key, value) in self.header.iter() {
-                let header_value = value.to_str().unwrap_or("");
-                req_header.set_item(key.as_str(), header_value)?;
-            }
-            return Ok(req_header.unbind());
-        }
-
-        #[getter]
-        fn body(&self, py: Python) -> PyResult<Py<PyBytes>> {
-            return Ok(PyBytes::new(py, &self.body).unbind());
-        }
-        #[getter]
-        fn text(&self) -> PyResult<String> {
-            return Ok(String::from_utf8_lossy(&self.body).to_string());
-        }
-
-        fn __repr__(&self) -> PyResult<String> {
-            return Ok(format!(
-                "SlimeRequest <path: {} method: {}>",
-                self.path(),
-                self.method()
-            ));
-        }
-    }
-    #[pyclass]
-    struct SlimeResponse {
-        status: u16,
-        headers: Option<Py<PyDict>>,
-        content_type: String,
-        body: Option<String>,
-    }
-
-    #[pymethods]
-    impl SlimeResponse {
-        #[new]
-        fn new() -> SlimeResponse {
-            SlimeResponse {
-                status: 200,
-                headers: None,
-                content_type: "text/plain".to_string(),
-                body: None,
-            }
-        }
-
-        fn plain(&mut self, resp_obj: String) -> PyResult<()> {
-            self.body = Some(resp_obj);
-            return Ok(());
-        }
-
-        fn set_status(&mut self, status: u16) -> PyResult<()> {
-            self.status = status;
-            return Ok(());
-        }
-
-        fn json(&mut self, resp_obj: Py<PyAny>, py: Python) -> PyResult<()> {
-            let value: serde_json::Value = depythonize(resp_obj.bind(py))?;
-            let json_str = serde_json::to_string(&value).map_err(|err| {
-                return PyErr::new::<pyo3::exceptions::PyException, _>(format!(
-                    "Json serialization error: {}",
-                    err
-                ));
-            })?;
-            self.body = Some(json_str);
-            self.content_type = "application/json".to_string();
-            return Ok(());
-        }
-    }
 
     struct PyRequest {
         handler: Arc<Py<PyAny>>,
         request: SlimeRequest,
-        response: oneshot::Sender<PyResult<String>>,
+        response: oneshot::Sender<PyResult<SlimeResponse>>,
     }
 
     struct SlimeServer {
@@ -198,7 +114,7 @@ mod web {
                         get(move |request: Request<Body>| {
                             let handler = handler.clone();
                             let worker_txs = worker_txs.clone();
-                            dbg!(&request);
+                            // dbg!(&request);
                             async move {
                                 let idx = request_counter.fetch_add(1, Ordering::Relaxed);
                                 let worker_tx = &worker_txs[idx % worker_count];
@@ -232,7 +148,9 @@ mod web {
                                 }
 
                                 match resp_rx.await {
-                                    Ok(Ok(result)) => (StatusCode::OK, result).into_response(),
+                                    Ok(Ok(result)) => {
+                                        return result._into_response();
+                                    }
                                     Ok(Err(err)) => {
                                         (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
                                             .into_response()
@@ -281,11 +199,26 @@ mod web {
             pool.spawn(move || {
                 Python::attach(|py| {
                     while let Some(req) = py.detach(|| rx.blocking_recv()) {
-                        let result = req
-                            .handler
-                            .call1(py, (req.request,))
-                            .and_then(|r| r.extract::<String>(py));
-                        let _ = req.response.send(result);
+                        match Py::new(py, SlimeResponse::new(py)) {
+                            Ok(response_py) => {
+                                match req
+                                    .handler
+                                    .call1(py, (req.request, response_py.clone_ref(py)))
+                                {
+                                    Ok(_) => {
+                                        let result = response_py.borrow(py).clone_obj(py);
+
+                                        let _ = req.response.send(Ok(result));
+                                    }
+                                    Err(err) => {
+                                        let _ = req.response.send(Err(err));
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                let _ = req.response.send(Err(err));
+                            }
+                        }
                     }
                 });
             });
