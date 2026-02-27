@@ -1,18 +1,25 @@
+use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
+use bytes::Bytes;
 use pyo3::prelude::*;
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-use axum::{Router, routing::get, response::IntoResponse, http::StatusCode};
 use pyo3::types::PyDict;
-use tokio::sync::{mpsc, oneshot};
+use rayon::ThreadPoolBuilder;
+use std::net::SocketAddr;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+use tokio::net::TcpListener;
 use tokio::runtime::Builder;
 use tokio::signal;
-use std::net::SocketAddr;
-use tokio::net::TcpListener;
-use rayon::ThreadPoolBuilder;
-
+use tokio::sync::{mpsc, oneshot};
 
 #[pymodule]
 mod web {
 
+    use axum::{
+        body::{Body, to_bytes},
+        http::{self, Request},
+    };
 
     use super::*;
 
@@ -42,8 +49,27 @@ mod web {
         }
     }
 
+    struct SlimeRequest {
+        uri: http::Uri,
+        method: http::Method,
+        header: http::HeaderMap,
+        body: Bytes,
+    }
+
+    impl SlimeRequest {
+        pub fn new(req: Request<Body>, body: Bytes) -> SlimeRequest {
+            SlimeRequest {
+                uri: req.uri().clone(),
+                method: req.method().clone(),
+                header: req.headers().clone(),
+                body: body,
+            }
+        }
+    }
+
     struct PyRequest {
         handler: Arc<Py<PyAny>>,
+        request: SlimeRequest,
         response: oneshot::Sender<PyResult<String>>,
     }
 
@@ -56,7 +82,11 @@ mod web {
     }
 
     impl SlimeServer {
-        pub fn new(host: String, port: usize, worker_txs: Arc<Vec<mpsc::Sender<PyRequest>>>) -> Self {
+        pub fn new(
+            host: String,
+            port: usize,
+            worker_txs: Arc<Vec<mpsc::Sender<PyRequest>>>,
+        ) -> Self {
             Self {
                 routes: Vec::new(),
                 host,
@@ -92,23 +122,47 @@ mod web {
                 if method == "GET" {
                     server_router = server_router.route(
                         &path,
-                        get(move || {
+                        get(move |request: Request<Body>| {
                             let handler = handler.clone();
                             let worker_txs = worker_txs.clone();
+                            dbg!(&request);
                             async move {
                                 let idx = request_counter.fetch_add(1, Ordering::Relaxed);
                                 let worker_tx = &worker_txs[idx % worker_count];
 
                                 let (resp_tx, resp_rx) = oneshot::channel();
-
-                                if worker_tx.send(PyRequest { handler, response: resp_tx }).await.is_err() {
-                                    return (StatusCode::INTERNAL_SERVER_ERROR, "Worker down".to_string()).into_response();
+                                let body = match to_bytes(request.body(), 1024 * 8).await {
+                                    Ok(bod) => bod,
+                                    Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+                                };
+                                let slime_request = SlimeRequest::new(request, body);
+                                if worker_tx
+                                    .send(PyRequest {
+                                        handler,
+                                        request: slime_request,
+                                        response: resp_tx,
+                                    })
+                                    .await
+                                    .is_err()
+                                {
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "Worker down".to_string(),
+                                    )
+                                        .into_response();
                                 }
 
                                 match resp_rx.await {
                                     Ok(Ok(result)) => (StatusCode::OK, result).into_response(),
-                                    Ok(Err(err)) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-                                    Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Worker dropped".to_string()).into_response(),
+                                    Ok(Err(err)) => {
+                                        (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                                            .into_response()
+                                    }
+                                    Err(_) => (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "Worker dropped".to_string(),
+                                    )
+                                        .into_response(),
                                 }
                             }
                         }),
@@ -137,7 +191,10 @@ mod web {
 
     fn spawn_python_workers(worker_count: usize) -> Arc<Vec<mpsc::Sender<PyRequest>>> {
         let mut worker_txs = Vec::with_capacity(worker_count);
-        let pool = ThreadPoolBuilder::new().num_threads(worker_count).build().unwrap();
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(worker_count)
+            .build()
+            .unwrap();
         for _ in 0..worker_count {
             let (tx, mut rx) = mpsc::channel::<PyRequest>(1024);
             worker_txs.push(tx.clone());
@@ -160,7 +217,9 @@ mod web {
         let slime_routes = slime_obj_bound.call_method0("_get_routes")?;
         let routes = slime_routes.cast::<PyDict>()?;
 
-        let worker_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let worker_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
         let worker_txs = spawn_python_workers(worker_count);
 
         let mut server = SlimeServer::new(host, port, worker_txs);
@@ -174,5 +233,4 @@ mod web {
         py.detach(|| runtime.block_on(server.server_run()))?;
         Ok(())
     }
-
 }
