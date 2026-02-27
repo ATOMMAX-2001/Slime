@@ -1,7 +1,7 @@
 use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
 use bytes::Bytes;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBytes, PyDict};
 use rayon::ThreadPoolBuilder;
 use std::net::SocketAddr;
 use std::sync::{
@@ -48,22 +48,42 @@ mod web {
             }
         }
     }
-
+    #[pyclass]
     struct SlimeRequest {
         uri: http::Uri,
         method: http::Method,
-        header: http::HeaderMap,
+        header: Arc<http::HeaderMap>,
         body: Bytes,
     }
-
+    #[pymethods]
     impl SlimeRequest {
-        pub fn new(req: Request<Body>, body: Bytes) -> SlimeRequest {
-            SlimeRequest {
-                uri: req.uri().clone(),
-                method: req.method().clone(),
-                header: req.headers().clone(),
-                body: body,
+        #[getter]
+        fn method(&self) -> String {
+            return self.method.to_string();
+        }
+        #[getter]
+        fn path(&self) -> String {
+            return self.uri.to_string();
+        }
+
+        #[getter]
+        fn header<'py>(&self, py: Python<'py>) -> PyResult<Py<PyDict>> {
+            let req_header = PyDict::new(py);
+
+            for (key, value) in self.header.iter() {
+                let header_value = value.to_str().unwrap_or("");
+                req_header.set_item(key.as_str(), header_value)?;
             }
+            return Ok(req_header.unbind());
+        }
+
+        #[getter]
+        fn body(&self, py: Python) -> PyResult<Py<PyBytes>> {
+            Ok(PyBytes::new(py, &self.body).unbind())
+        }
+        #[getter]
+        fn text(&self) -> PyResult<String> {
+            return Ok(String::from_utf8_lossy(&self.body).to_string());
         }
     }
 
@@ -131,11 +151,17 @@ mod web {
                                 let worker_tx = &worker_txs[idx % worker_count];
 
                                 let (resp_tx, resp_rx) = oneshot::channel();
-                                let body = match to_bytes(request.body(), 1024 * 8).await {
+                                let (parts, body) = request.into_parts();
+                                let body = match to_bytes(body, 1024 * 1024 * 10).await {
                                     Ok(bod) => bod,
                                     Err(_) => return StatusCode::BAD_REQUEST.into_response(),
                                 };
-                                let slime_request = SlimeRequest::new(request, body);
+                                let slime_request = SlimeRequest {
+                                    uri: parts.uri,
+                                    method: parts.method,
+                                    header: Arc::new(parts.headers),
+                                    body: body,
+                                };
                                 if worker_tx
                                     .send(PyRequest {
                                         handler,
@@ -169,7 +195,7 @@ mod web {
                     );
                 }
             }
-            server_router
+            return server_router;
         }
 
         pub async fn server_run(self) -> PyResult<()> {
@@ -201,8 +227,11 @@ mod web {
 
             pool.spawn(move || {
                 Python::attach(|py| {
-                    while let Some(req) = rx.blocking_recv() {
-                        let result = req.handler.call0(py).and_then(|r| r.extract::<String>(py));
+                    while let Some(req) = py.detach(|| rx.blocking_recv()) {
+                        let result = req
+                            .handler
+                            .call1(py, (req.request,))
+                            .and_then(|r| r.extract::<String>(py));
                         let _ = req.response.send(result);
                     }
                 });
