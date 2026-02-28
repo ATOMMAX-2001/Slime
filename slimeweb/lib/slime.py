@@ -61,7 +61,14 @@ class Slime:
     def _get_routes(self) -> Dict[Routes, Callable]:
         return self.__routes
 
-    def serve(self, host: str = "127.0.0.1", port: int = 3000) -> None:
+    def serve(
+        self, host: str = "127.0.0.1", port: int = 3000, secret_key: str | None = None
+    ) -> None:
+        if secret_key is None:
+            import secrets
+
+            secret_key = secrets.token_urlsafe(30)
+
         import web
 
         web.init_web(self, host, port)

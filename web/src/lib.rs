@@ -19,6 +19,10 @@ use tokio::runtime::Builder;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
 mod request;
 mod response;
 
@@ -68,6 +72,7 @@ mod web {
         port: usize,
         worker_txs: Arc<Vec<mpsc::Sender<PyRequest>>>,
         request_counter: Arc<AtomicUsize>,
+        secret_key: Arc<Vec<u8>>,
     }
 
     impl SlimeServer {
@@ -75,13 +80,15 @@ mod web {
             host: String,
             port: usize,
             worker_txs: Arc<Vec<mpsc::Sender<PyRequest>>>,
+            secret_key: String,
         ) -> Self {
             Self {
-                routes: Vec::new(),
+                routes: Vec::with_capacity(5),
                 host,
                 port,
                 worker_txs,
                 request_counter: Arc::new(AtomicUsize::new(0)),
+                secret_key: Arc::new(secret_key.as_bytes().to_vec()),
             }
         }
 
@@ -114,7 +121,6 @@ mod web {
                         get(move |request: Request<Body>| {
                             let handler = handler.clone();
                             let worker_txs = worker_txs.clone();
-                            // dbg!(&request);
                             async move {
                                 let idx = request_counter.fetch_add(1, Ordering::Relaxed);
                                 let worker_tx = &worker_txs[idx % worker_count];
@@ -227,7 +233,13 @@ mod web {
     }
 
     #[pyfunction]
-    pub fn init_web(py: Python, slime_obj: Py<PyAny>, host: String, port: usize) -> PyResult<()> {
+    pub fn init_web(
+        py: Python,
+        slime_obj: Py<PyAny>,
+        host: String,
+        port: usize,
+        secret_key: String,
+    ) -> PyResult<()> {
         let slime_obj_bound = slime_obj.bind(py);
         let slime_routes = slime_obj_bound.call_method0("_get_routes")?;
         let routes = slime_routes.cast::<PyDict>()?;
@@ -237,7 +249,7 @@ mod web {
             .unwrap_or(1);
         let worker_txs = spawn_python_workers(worker_count);
 
-        let mut server = SlimeServer::new(host, port, worker_txs);
+        let mut server = SlimeServer::new(host, port, worker_txs, secret_key);
         server.load_routes(routes)?;
 
         let runtime = Builder::new_multi_thread()

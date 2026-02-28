@@ -3,7 +3,10 @@ use pyo3::types::PyDict;
 
 use axum::{
     body::Body,
-    http::{HeaderValue, StatusCode},
+    http::{
+        HeaderValue, StatusCode,
+        header::{CONTENT_TYPE, SERVER, SET_COOKIE},
+    },
     response::Response,
 };
 use pythonize::depythonize;
@@ -13,6 +16,7 @@ pub struct SlimeResponse {
     pub status: u16,
     pub headers: Py<PyDict>,
     pub header_size: usize,
+    pub cookies: Vec<String>,
     pub content_type: String,
     pub body: Option<String>,
 }
@@ -20,7 +24,10 @@ pub struct SlimeResponse {
 impl SlimeResponse {
     pub fn _into_response(&self) -> Response<Body> {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::OK);
-        let mut result = Response::builder().status(status);
+        let mut result = Response::builder()
+            .status(status)
+            .header(CONTENT_TYPE, &self.content_type)
+            .header(SERVER, "SlimeV0.1");
         if self.header_size != 0 {
             result = Python::attach(|py| {
                 if let Ok(headers_result) = self.headers.bind(py).cast::<PyDict>() {
@@ -36,10 +43,20 @@ impl SlimeResponse {
             });
         }
 
-        if let Some(body_data) = self.body.to_owned() {
-            return result.body(Body::from(body_data)).unwrap();
+        let mut final_response = if let Some(body_data) = self.body.to_owned() {
+            result.body(Body::from(body_data)).unwrap()
+        } else {
+            result.body(Body::from("")).unwrap()
+        };
+
+        for cookie in &self.cookies {
+            if let Ok(header_value) = HeaderValue::from_str(cookie) {
+                final_response
+                    .headers_mut()
+                    .append(SET_COOKIE, header_value);
+            }
         }
-        return result.body(Body::from("")).unwrap();
+        return final_response;
     }
 
     pub fn clone_obj(&self, py: Python) -> SlimeResponse {
@@ -47,6 +64,7 @@ impl SlimeResponse {
             status: self.status,
             headers: self.headers.clone_ref(py),
             header_size: self.header_size,
+            cookies: self.cookies.to_owned(),
             content_type: self.content_type.to_owned(),
             body: self.body.clone(),
         }
@@ -61,9 +79,16 @@ impl SlimeResponse {
             status: 200,
             headers: PyDict::new(py).unbind(),
             header_size: 0,
+            cookies: Vec::new(),
             content_type: "text/plain".to_string(),
             body: None,
         }
+    }
+
+    fn set_cookie(&mut self, key: String, value: String, path: String) -> PyResult<()> {
+        let cookie = format!("{}={};Path={}; HttpOnly", key, value, path);
+        self.cookies.push(cookie);
+        return Ok(());
     }
 
     fn set_header(&mut self, py: Python, key: String, value: String) -> PyResult<()> {
