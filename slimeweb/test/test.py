@@ -5,7 +5,7 @@ app = slime.Slime(__file__)
 
 @app.route(path="/", method="GET")
 def hello(req, resp):
-    html = req.render("hello.html", **{"name": "abilash"})
+    html = req.render("hello.html", **{"name": "abilash", "age": 24})
     return resp.html(html)
     # return resp.json({"name": "abilash", "age": 24})
 

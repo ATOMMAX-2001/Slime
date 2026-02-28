@@ -9,7 +9,7 @@ use axum::{
     http::Request,
 };
 
-use minijinja::{Environment, path_loader};
+use minijinja::{AutoEscape, Environment, path_loader};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{
@@ -65,6 +65,8 @@ mod web {
     }
 
     struct SlimeServer {
+        filename: String,
+        is_dev: bool,
         routes: Vec<Route>,
         host: String,
         port: usize,
@@ -81,15 +83,12 @@ mod web {
             worker_txs: Arc<Vec<mpsc::Sender<PyRequest>>>,
             secret_key: String,
             filename: String,
+            is_dev: bool,
         ) -> Self {
-            let mut env = Environment::new();
-            if let Some(file_path) = Path::new(&filename).parent() {
-                env.set_loader(path_loader(file_path.join("template")));
-            } else {
-                println!("ERROR: Cant able to load template invalid path");
-            };
-
+            let env = SlimeServer::get_template_environment(&filename);
             Self {
+                filename: filename,
+                is_dev: is_dev,
                 routes: Vec::with_capacity(5),
                 host,
                 port,
@@ -99,7 +98,22 @@ mod web {
                 template: Arc::new(env),
             }
         }
-
+        fn get_template_environment(filename: &String) -> Environment<'static> {
+            let mut env = Environment::new();
+            if let Some(file_path) = Path::new(&filename).parent() {
+                env.set_loader(path_loader(file_path.join("templates")));
+                env.set_auto_escape_callback(|name| {
+                    if name.ends_with(".html") {
+                        AutoEscape::Html
+                    } else {
+                        AutoEscape::None
+                    }
+                });
+            } else {
+                println!("ERROR: Cant able to load template invalid path");
+            };
+            return env;
+        }
         pub fn load_routes(&mut self, routes: &Bound<PyDict>) -> PyResult<()> {
             let mut routes_collection = Vec::with_capacity(5);
             for (key, value) in routes {
@@ -123,13 +137,19 @@ mod web {
                 let request_counter = self.request_counter.clone();
                 let worker_count = worker_txs.len();
                 let secret_key = self.secret_key.clone();
-                let template_engine = self.template.clone();
+                let mut template_engine = self.template.clone();
+                let is_dev = self.is_dev;
+                let filename = self.filename.to_owned();
                 if method == "GET" {
                     server_router = server_router.route(
                         &path,
                         get(move |request: Request<Body>| {
                             let handler = handler.clone();
                             let worker_txs = worker_txs.clone();
+                            if is_dev {
+                                template_engine =
+                                    Arc::new(SlimeServer::get_template_environment(&filename));
+                            }
                             async move {
                                 let idx = request_counter.fetch_add(1, Ordering::Relaxed);
                                 let worker_tx = &worker_txs[idx % worker_count];
@@ -250,6 +270,7 @@ mod web {
         host: String,
         port: usize,
         secret_key: String,
+        is_dev: bool,
     ) -> PyResult<()> {
         let slime_obj_bound = slime_obj.bind(py);
         let slime_routes = slime_obj_bound.call_method0("_get_routes")?;
@@ -260,7 +281,8 @@ mod web {
             .map(|n| n.get())
             .unwrap_or(1);
         let worker_txs = spawn_python_workers(worker_count);
-        let mut server = SlimeServer::new(host, port, worker_txs, secret_key, slime_filename);
+        let mut server =
+            SlimeServer::new(host, port, worker_txs, secret_key, slime_filename, is_dev);
         server.load_routes(routes)?;
 
         let runtime = Builder::new_multi_thread()

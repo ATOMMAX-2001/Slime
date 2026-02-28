@@ -1,3 +1,4 @@
+from tempfile import template
 from typing import Callable, Dict
 
 
@@ -62,7 +63,11 @@ class Slime:
         return self.__routes
 
     def serve(
-        self, host: str = "127.0.0.1", port: int = 3000, secret_key: str | None = None
+        self,
+        host: str = "127.0.0.1",
+        port: int = 3000,
+        secret_key: str | None = None,
+        dev: bool = False,
     ) -> None:
         if secret_key is None:
             import secrets
@@ -71,6 +76,6 @@ class Slime:
 
         import web
 
-        web.init_web(self, host, port, secret_key)
+        web.init_web(self, host, port, secret_key, dev)
         print("Slime server is shutting down...")
         print("Finished")

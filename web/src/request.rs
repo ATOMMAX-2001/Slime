@@ -9,6 +9,7 @@ use pyo3::types::{PyBytes, PyDict};
 use pythonize::depythonize;
 use sha2::Sha256;
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
@@ -114,7 +115,7 @@ impl SlimeRequest {
     }
     #[pyo3(signature = (template_name, **kwargs))]
     fn render(
-        &self,
+        &mut self,
         py: Python,
         template_name: String,
         kwargs: Option<&Bound<'_, PyDict>>,
@@ -125,6 +126,7 @@ impl SlimeRequest {
         };
         let context: serde_json::Value = depythonize(context_dict)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+
         let template = self
             .template
             .get_template(&template_name)
