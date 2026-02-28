@@ -2,14 +2,12 @@ use axum::http;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use hmac::{Hmac, Mac};
-
 use minijinja::Environment;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
-use pythonize::depythonize;
+use pythonize::{depythonize, pythonize};
 use sha2::Sha256;
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
@@ -19,6 +17,10 @@ pub struct SlimeRequest {
     pub method: http::Method,
     pub header: Arc<http::HeaderMap>,
     pub body: Bytes,
+    pub query: HashMap<String, String>,
+    pub params: HashMap<String, String>,
+    pub json_body: Option<serde_json::Value>,
+    pub form: Option<HashMap<String, String>>,
     pub secret: Arc<Vec<u8>>,
     pub template: Arc<Environment<'static>>,
 }
@@ -66,6 +68,35 @@ impl SlimeRequest {
     fn body(&self, py: Python) -> PyResult<Py<PyBytes>> {
         return Ok(PyBytes::new(py, &self.body).unbind());
     }
+
+    #[getter]
+    fn bytes(&self) -> PyResult<Vec<u8>> {
+        return Ok(self.body.to_vec());
+    }
+
+    #[getter]
+    fn form(&self) -> PyResult<HashMap<String, String>> {
+        return Ok(self.form.to_owned().unwrap_or_default());
+    }
+
+    #[getter]
+    fn json(&self, py: Python) -> PyResult<Py<PyAny>> {
+        match &self.json_body {
+            Some(value) => return Ok(pythonize(py, value)?.unbind()),
+            None => return Ok(py.None()),
+        }
+    }
+
+    #[getter]
+    fn query(&self) -> PyResult<HashMap<String, String>> {
+        return Ok(self.query.to_owned());
+    }
+
+    #[getter]
+    fn params(&self) -> PyResult<HashMap<String, String>> {
+        return Ok(self.params.to_owned());
+    }
+
     #[getter]
     fn text(&self) -> PyResult<String> {
         return Ok(String::from_utf8_lossy(&self.body).to_string());

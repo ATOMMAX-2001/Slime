@@ -1,4 +1,4 @@
-use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{Router, http::StatusCode, response::IntoResponse};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -9,9 +9,10 @@ use axum::{
     http::Request,
 };
 
+use axum::extract::Path;
 use minijinja::{AutoEscape, Environment, path_loader};
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::Path as OsPath;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -20,6 +21,7 @@ use tokio::net::TcpListener;
 use tokio::runtime::Builder;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
+use tower_http::services::ServeDir;
 
 mod request;
 mod response;
@@ -29,6 +31,10 @@ use response::SlimeResponse;
 
 #[pymodule]
 mod web {
+
+    use std::collections::HashMap;
+
+    use axum::routing::any;
 
     use super::*;
 
@@ -100,7 +106,8 @@ mod web {
         }
         fn get_template_environment(filename: &String) -> Environment<'static> {
             let mut env = Environment::new();
-            if let Some(file_path) = Path::new(&filename).parent() {
+
+            if let Some(file_path) = OsPath::new(&filename).parent() {
                 env.set_loader(path_loader(file_path.join("templates")));
                 env.set_auto_escape_callback(|name| {
                     if name.ends_with(".html") {
@@ -128,6 +135,9 @@ mod web {
 
         fn set_server_routes(&self) -> Router {
             let mut server_router = Router::new();
+            let static_dir = OsPath::new(&self.filename).parent().unwrap().join("static");
+            let static_service = ServeDir::new(static_dir);
+            server_router = server_router.nest_service("/static", static_service);
             for route in &self.routes {
                 let route = route.clone();
                 let path = route.path;
@@ -140,10 +150,11 @@ mod web {
                 let mut template_engine = self.template.clone();
                 let is_dev = self.is_dev;
                 let filename = self.filename.to_owned();
-                if method == "GET" {
-                    server_router = server_router.route(
-                        &path,
-                        get(move |request: Request<Body>| {
+                server_router = server_router.route(
+                    &path,
+                    any(
+                        move |Path(params): Path<HashMap<String, String>>,
+                              request: Request<Body>| {
                             let handler = handler.clone();
                             let worker_txs = worker_txs.clone();
                             if is_dev {
@@ -151,15 +162,73 @@ mod web {
                                     Arc::new(SlimeServer::get_template_environment(&filename));
                             }
                             async move {
+                                if request.method().as_str() != method {
+                                    return StatusCode::METHOD_NOT_ALLOWED.into_response();
+                                }
                                 let idx = request_counter.fetch_add(1, Ordering::Relaxed);
                                 let worker_tx = &worker_txs[idx % worker_count];
 
                                 let (resp_tx, resp_rx) = oneshot::channel();
-                                let (parts, body) = request.into_parts();
-                                let body = match to_bytes(body, 1024 * 1024 * 10).await {
+                                let (parts, raw_body) = request.into_parts();
+                                let content_type = parts
+                                    .headers
+                                    .get("content-type")
+                                    .and_then(|value| value.to_str().ok())
+                                    .unwrap_or("");
+
+                                let body = match to_bytes(raw_body, 1024 * 1024 * 10).await {
                                     Ok(bod) => bod,
                                     Err(_) => return StatusCode::BAD_REQUEST.into_response(),
                                 };
+                                let mut json_body: Option<serde_json::Value> = None;
+                                let mut form_body: Option<HashMap<String, String>> = None;
+                                if content_type != "" {
+                                    if content_type.starts_with("application/json") {
+                                        json_body =
+                                            serde_json::from_slice::<serde_json::Value>(&body).ok();
+                                    } else if content_type
+                                        .starts_with("application/x-www-form-urlencoded")
+                                    {
+                                        form_body = serde_urlencoded::from_bytes::<
+                                            HashMap<String, String>,
+                                        >(&body)
+                                        .ok();
+                                    } else if content_type.starts_with("multipart/form-data") {
+                                        if let Ok(boundary) = multer::parse_boundary(content_type) {
+                                            let body_clone = body.clone();
+                                            let stream = futures_util::stream::once(async move {
+                                                Ok::<_, std::io::Error>(body_clone)
+                                            });
+
+                                            let mut multipart =
+                                                multer::Multipart::new(stream, boundary);
+
+                                            let mut text_fields = HashMap::new();
+
+                                            while let Some(field) =
+                                                multipart.next_field().await.unwrap_or(None)
+                                            {
+                                                let name = field.name().map(|s| s.to_string());
+
+                                                if field.file_name().is_none() {
+                                                    if let (Some(name), Ok(text)) =
+                                                        (name, field.text().await)
+                                                    {
+                                                        text_fields.insert(name, text);
+                                                    }
+                                                } else {
+                                                    // TODO: file upload
+                                                }
+                                            }
+
+                                            form_body = Some(text_fields);
+                                        }
+                                    }
+                                }
+
+                                let query_params: HashMap<String, String> =
+                                    serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
+                                        .unwrap_or_default();
                                 let slime_request = SlimeRequest {
                                     uri: parts.uri,
                                     method: parts.method,
@@ -167,6 +236,10 @@ mod web {
                                     body: body,
                                     secret: secret_key,
                                     template: template_engine,
+                                    query: query_params,
+                                    json_body: json_body,
+                                    form: form_body,
+                                    params: params,
                                 };
                                 if worker_tx
                                     .send(PyRequest {
@@ -199,9 +272,9 @@ mod web {
                                         .into_response(),
                                 }
                             }
-                        }),
-                    );
-                }
+                        },
+                    ),
+                );
             }
             return server_router;
         }

@@ -22,3 +22,8 @@ sha2 = "0.10.9"
 base64 = "0.22.1"
 subtle = "2.6.1"
 minijinja = { version="2.16.0",features=["loader"] }
+serde_urlencoded = "0.7.1"
+multer = "3.1.0"
+tower-http = {version ="0.6.8", features = ["fs"] }
+futures-util = "0.3.32"
+tokio-util = "0.7.18"
