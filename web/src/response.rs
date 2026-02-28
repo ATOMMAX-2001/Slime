@@ -148,4 +148,10 @@ impl SlimeResponse {
         self.content_type = "application/json".to_string();
         return Ok(());
     }
+
+    fn html(&mut self, body: String) -> PyResult<()> {
+        self.body = Some(body);
+        self.content_type = "text/html; charset=utf-8".to_string();
+        return Ok(());
+    }
 }

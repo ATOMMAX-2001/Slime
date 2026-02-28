@@ -3,8 +3,10 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use hmac::{Hmac, Mac};
 
+use minijinja::Environment;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
+use pythonize::depythonize;
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,6 +19,7 @@ pub struct SlimeRequest {
     pub header: Arc<http::HeaderMap>,
     pub body: Bytes,
     pub secret: Arc<Vec<u8>>,
+    pub template: Arc<Environment<'static>>,
 }
 
 impl SlimeRequest {
@@ -108,6 +111,29 @@ impl SlimeRequest {
         } else {
             Ok(None)
         }
+    }
+    #[pyo3(signature = (template_name, **kwargs))]
+    fn render(
+        &self,
+        py: Python,
+        template_name: String,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<String> {
+        let context_dict = match kwargs {
+            Some(d) => d,
+            None => &PyDict::new(py),
+        };
+        let context: serde_json::Value = depythonize(context_dict)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        let template = self
+            .template
+            .get_template(&template_name)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        let render_output = template
+            .render(context)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+
+        return Ok(render_output);
     }
 
     fn __repr__(&self) -> PyResult<String> {

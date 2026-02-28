@@ -21,3 +21,4 @@ hmac = "0.12.1"
 sha2 = "0.10.9"
 base64 = "0.22.1"
 subtle = "2.6.1"
+minijinja = { version="2.16.0",features=["loader"] }

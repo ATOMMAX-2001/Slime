@@ -5,10 +5,9 @@ app = slime.Slime(__file__)
 
 @app.route(path="/", method="GET")
 def hello(req, resp):
-    # return resp.plain("hello world")
-    # resp.set_header("Server", "Slime")
-    # resp.set_sign_cookie("hello", "world", "/", req.secret_key)
-    return resp.json({"name": "abilash", "age": 24})
+    html = req.render("hello.html", **{"name": "abilash"})
+    return resp.html(html)
+    # return resp.json({"name": "abilash", "age": 24})
 
 
 if __name__ == "__main__":

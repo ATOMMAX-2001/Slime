@@ -9,7 +9,9 @@ use axum::{
     http::Request,
 };
 
+use minijinja::{Environment, path_loader};
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -69,6 +71,7 @@ mod web {
         worker_txs: Arc<Vec<mpsc::Sender<PyRequest>>>,
         request_counter: Arc<AtomicUsize>,
         secret_key: Arc<Vec<u8>>,
+        template: Arc<Environment<'static>>,
     }
 
     impl SlimeServer {
@@ -77,7 +80,15 @@ mod web {
             port: usize,
             worker_txs: Arc<Vec<mpsc::Sender<PyRequest>>>,
             secret_key: String,
+            filename: String,
         ) -> Self {
+            let mut env = Environment::new();
+            if let Some(file_path) = Path::new(&filename).parent() {
+                env.set_loader(path_loader(file_path.join("template")));
+            } else {
+                println!("ERROR: Cant able to load template invalid path");
+            };
+
             Self {
                 routes: Vec::with_capacity(5),
                 host,
@@ -85,6 +96,7 @@ mod web {
                 worker_txs,
                 request_counter: Arc::new(AtomicUsize::new(0)),
                 secret_key: Arc::new(secret_key.as_bytes().to_vec()),
+                template: Arc::new(env),
             }
         }
 
@@ -111,6 +123,7 @@ mod web {
                 let request_counter = self.request_counter.clone();
                 let worker_count = worker_txs.len();
                 let secret_key = self.secret_key.clone();
+                let template_engine = self.template.clone();
                 if method == "GET" {
                     server_router = server_router.route(
                         &path,
@@ -133,6 +146,7 @@ mod web {
                                     header: Arc::new(parts.headers),
                                     body: body,
                                     secret: secret_key,
+                                    template: template_engine,
                                 };
                                 if worker_tx
                                     .send(PyRequest {
@@ -239,14 +253,14 @@ mod web {
     ) -> PyResult<()> {
         let slime_obj_bound = slime_obj.bind(py);
         let slime_routes = slime_obj_bound.call_method0("_get_routes")?;
+        let slime_filename = slime_obj_bound.getattr("_Slime__filename")?.to_string();
         let routes = slime_routes.cast::<PyDict>()?;
 
         let worker_count = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
         let worker_txs = spawn_python_workers(worker_count);
-
-        let mut server = SlimeServer::new(host, port, worker_txs, secret_key);
+        let mut server = SlimeServer::new(host, port, worker_txs, secret_key, slime_filename);
         server.load_routes(routes)?;
 
         let runtime = Builder::new_multi_thread()
