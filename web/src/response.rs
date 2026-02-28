@@ -1,6 +1,3 @@
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
-
 use axum::{
     body::Body,
     http::{
@@ -9,7 +6,12 @@ use axum::{
     },
     response::Response,
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use hmac::{Hmac, Mac};
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use pythonize::depythonize;
+use sha2::Sha256;
 
 #[pyclass]
 pub struct SlimeResponse {
@@ -22,6 +24,14 @@ pub struct SlimeResponse {
 }
 
 impl SlimeResponse {
+    fn sign_cookie_values(&self, secret: &[u8], value: &String) -> String {
+        type HmacSha256 = Hmac<Sha256>;
+        let mut mac = HmacSha256::new_from_slice(secret).unwrap();
+        mac.update(value.as_bytes());
+        let signature = mac.finalize().into_bytes();
+        return URL_SAFE_NO_PAD.encode(signature);
+    }
+
     pub fn _into_response(&self) -> Response<Body> {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::OK);
         let mut result = Response::builder()
@@ -87,6 +97,24 @@ impl SlimeResponse {
 
     fn set_cookie(&mut self, key: String, value: String, path: String) -> PyResult<()> {
         let cookie = format!("{}={};Path={}; HttpOnly", key, value, path);
+        self.cookies.push(cookie);
+        return Ok(());
+    }
+
+    fn set_sign_cookie(
+        &mut self,
+        key: String,
+        value: String,
+        path: String,
+        secret: String,
+    ) -> PyResult<()> {
+        let cookie = format!(
+            "{}={}.{};Path={}; HttpOnly",
+            key,
+            &value,
+            self.sign_cookie_values(secret.as_bytes(), &value),
+            path
+        );
         self.cookies.push(cookie);
         return Ok(());
     }

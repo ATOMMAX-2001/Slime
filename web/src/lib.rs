@@ -19,10 +19,6 @@ use tokio::runtime::Builder;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
 
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-
 mod request;
 mod response;
 
@@ -114,7 +110,7 @@ mod web {
                 let worker_txs = self.worker_txs.clone();
                 let request_counter = self.request_counter.clone();
                 let worker_count = worker_txs.len();
-
+                let secret_key = self.secret_key.clone();
                 if method == "GET" {
                     server_router = server_router.route(
                         &path,
@@ -136,6 +132,7 @@ mod web {
                                     method: parts.method,
                                     header: Arc::new(parts.headers),
                                     body: body,
+                                    secret: secret_key,
                                 };
                                 if worker_tx
                                     .send(PyRequest {
