@@ -16,6 +16,7 @@ use sha2::Sha256;
 #[pyclass]
 pub struct SlimeResponse {
     pub status: u16,
+    pub is_stream: bool,
     pub headers: Py<PyDict>,
     pub header_size: usize,
     pub cookies: Vec<String>,
@@ -72,6 +73,7 @@ impl SlimeResponse {
     pub fn clone_obj(&self, py: Python) -> SlimeResponse {
         SlimeResponse {
             status: self.status,
+            is_stream: self.is_stream,
             headers: self.headers.clone_ref(py),
             header_size: self.header_size,
             cookies: self.cookies.to_owned(),
@@ -87,6 +89,7 @@ impl SlimeResponse {
     pub fn new(py: Python) -> SlimeResponse {
         SlimeResponse {
             status: 200,
+            is_stream: false,
             headers: PyDict::new(py).unbind(),
             header_size: 0,
             cookies: Vec::new(),
@@ -152,6 +155,11 @@ impl SlimeResponse {
     fn html(&mut self, body: String) -> PyResult<()> {
         self.body = Some(body);
         self.content_type = "text/html; charset=utf-8".to_string();
+        return Ok(());
+    }
+
+    fn stream(&mut self, flag: bool) -> PyResult<()> {
+        self.is_stream = flag;
         return Ok(());
     }
 }

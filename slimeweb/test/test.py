@@ -9,6 +9,17 @@ def land(req, resp):
     return resp.html(html)
 
 
+@app.route(path="/stream", method="GET")
+def stream_me(req, resp):
+    resp.stream(True)
+
+    def generator():
+        for i in [1, 2, 3, 4, 5]:
+            yield str(i) + "\n"
+
+    return generator()
+
+
 @app.route(path="/test", method="POST")
 def hello(req, resp):
     # print("query", req.query)
