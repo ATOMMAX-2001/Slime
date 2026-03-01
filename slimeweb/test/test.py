@@ -4,6 +4,12 @@ app = slime.Slime(__file__)
 
 
 @app.route(path="/", method="GET")
+def land(req, resp):
+    html = req.render("hello.html", **{"name": "abilash", "age": 24})
+    return resp.html(html)
+
+
+@app.route(path="/test", method="POST")
 def hello(req, resp):
     # print("query", req.query)
     # print("params", req.params)
@@ -12,10 +18,19 @@ def hello(req, resp):
     # print("form", req.form)
     # print("text", req.text)
     # print("bytes", req.bytes)
+    # print("file",req.file)
     # print("*" * 10)
     # for i in ["abilash", "abi", "atom"]:
-    html = req.render("hello.html", **{"name": "abi", "age": 24})
-    return resp.html(html)
+    file = req.file[0]
+    print(file.filename)
+    print(file.content_type)
+    print(file.file_path)
+    print(file.file_size)
+    print(file.extension)
+    file.save(f"testing_file.{file.extension}")
+    return resp.json({"status": "ok"})
+    # html = req.render("hello.html", **{"name": "abi", "age": 24})
+    # return resp.html(html)
 
 
 # return resp.json({"name": "abilash", "age": 24})

@@ -8,8 +8,56 @@ use pyo3::types::{PyBytes, PyDict};
 use pythonize::{depythonize, pythonize};
 use sha2::Sha256;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
+
+#[derive(Clone)]
+#[pyclass]
+pub struct SlimeFile {
+    pub filename: String,
+    pub content_type: String,
+    pub extension: String,
+    pub temp_path: PathBuf,
+    pub size: usize,
+}
+#[pymethods]
+impl SlimeFile {
+    #[getter]
+    fn filename(&self) -> PyResult<String> {
+        return Ok(self.filename.to_owned());
+    }
+
+    #[getter]
+    fn content_type(&self) -> PyResult<String> {
+        return Ok(self.content_type.to_owned());
+    }
+
+    #[getter]
+    fn file_path(&self) -> PyResult<String> {
+        return Ok(self.temp_path.to_str().unwrap_or("").to_string());
+    }
+
+    #[getter]
+    fn extension(&self) -> PyResult<String> {
+        return Ok(self.extension.to_owned());
+    }
+
+    #[getter]
+    fn file_size(&self) -> PyResult<usize> {
+        return Ok(self.size);
+    }
+
+    fn save(&self, new_filename: String) -> PyResult<()> {
+        std::fs::rename(&self.temp_path, new_filename)?;
+        return Ok(());
+    }
+
+    fn clean(&self) -> PyResult<()> {
+        std::fs::remove_file(&self.temp_path)?;
+        return Ok(());
+    }
+}
 
 #[pyclass]
 pub struct SlimeRequest {
@@ -21,6 +69,7 @@ pub struct SlimeRequest {
     pub params: HashMap<String, String>,
     pub json_body: Option<serde_json::Value>,
     pub form: Option<HashMap<String, String>>,
+    pub files: Option<Vec<SlimeFile>>,
     pub secret: Arc<Vec<u8>>,
     pub template: Arc<Environment<'static>>,
 }
@@ -77,6 +126,20 @@ impl SlimeRequest {
     #[getter]
     fn form(&self) -> PyResult<HashMap<String, String>> {
         return Ok(self.form.to_owned().unwrap_or_default());
+    }
+
+    #[getter]
+    fn file(&self) -> PyResult<Vec<SlimeFile>> {
+        return Ok(self.files.to_owned().unwrap_or_default());
+    }
+
+    #[getter]
+    fn no_of_files_available(&self) -> PyResult<usize> {
+        if let Some(data) = &self.files {
+            return Ok(data.len());
+        } else {
+            return Ok(0);
+        }
     }
 
     #[getter]

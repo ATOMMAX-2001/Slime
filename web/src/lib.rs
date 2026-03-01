@@ -26,7 +26,7 @@ use tower_http::services::ServeDir;
 mod request;
 mod response;
 
-use request::SlimeRequest;
+use request::{SlimeFile, SlimeRequest};
 use response::SlimeResponse;
 
 #[pymodule]
@@ -155,124 +155,167 @@ mod web {
                     any(
                         move |Path(params): Path<HashMap<String, String>>,
                               request: Request<Body>| {
-                            let handler = handler.clone();
-                            let worker_txs = worker_txs.clone();
-                            if is_dev {
-                                template_engine =
-                                    Arc::new(SlimeServer::get_template_environment(&filename));
-                            }
-                            async move {
-                                if request.method().as_str() != method {
-                                    return StatusCode::METHOD_NOT_ALLOWED.into_response();
+                                let handler = handler.clone();
+                                let worker_txs = worker_txs.clone();
+                                if is_dev {
+                                    template_engine =
+                                        Arc::new(SlimeServer::get_template_environment(&filename));
                                 }
-                                let idx = request_counter.fetch_add(1, Ordering::Relaxed);
-                                let worker_tx = &worker_txs[idx % worker_count];
+                                async move {
+                                    if request.method().as_str() != method {
+                                        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+                                    }
+                                    let idx = request_counter.fetch_add(1, Ordering::Relaxed);
+                                    let worker_tx = &worker_txs[idx % worker_count];
 
-                                let (resp_tx, resp_rx) = oneshot::channel();
-                                let (parts, raw_body) = request.into_parts();
-                                let content_type = parts
-                                    .headers
-                                    .get("content-type")
-                                    .and_then(|value| value.to_str().ok())
-                                    .unwrap_or("");
+                                    let (resp_tx, resp_rx) = oneshot::channel();
+                                    let (parts, raw_body) = request.into_parts();
+                                    let content_type = parts
+                                        .headers
+                                        .get("content-type")
+                                        .and_then(|value| value.to_str().ok())
+                                        .unwrap_or("");
 
-                                let body = match to_bytes(raw_body, 1024 * 1024 * 10).await {
-                                    Ok(bod) => bod,
-                                    Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-                                };
-                                let mut json_body: Option<serde_json::Value> = None;
-                                let mut form_body: Option<HashMap<String, String>> = None;
-                                if content_type != "" {
-                                    if content_type.starts_with("application/json") {
-                                        json_body =
-                                            serde_json::from_slice::<serde_json::Value>(&body).ok();
-                                    } else if content_type
-                                        .starts_with("application/x-www-form-urlencoded")
-                                    {
-                                        form_body = serde_urlencoded::from_bytes::<
-                                            HashMap<String, String>,
-                                        >(&body)
-                                        .ok();
-                                    } else if content_type.starts_with("multipart/form-data") {
-                                        if let Ok(boundary) = multer::parse_boundary(content_type) {
-                                            let body_clone = body.clone();
-                                            let stream = futures_util::stream::once(async move {
-                                                Ok::<_, std::io::Error>(body_clone)
-                                            });
+                                    let body = match to_bytes(raw_body, 1024 * 1024 * 10).await {
+                                        Ok(bod) => bod,
+                                        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+                                    };
+                                    let mut json_body: Option<serde_json::Value> = None;
+                                    let mut form_body: Option<HashMap<String, String>> = None;
+                                    let mut file_body: Option<Vec<SlimeFile>> = None;
+                                    if content_type != "" {
+                                        if content_type.starts_with("application/json") {
+                                            json_body =
+                                                serde_json::from_slice::<serde_json::Value>(&body).ok();
+                                        } else if content_type
+                                            .starts_with("application/x-www-form-urlencoded")
+                                        {
+                                            form_body = serde_urlencoded::from_bytes::<
+                                                HashMap<String, String>,
+                                            >(&body)
+                                            .ok();
+                                        } else if content_type.starts_with("multipart/form-data") {
+                                            if let Ok(boundary) = multer::parse_boundary(content_type) {
+                                                let body_clone = body.clone();
+                                                let stream = futures_util::stream::once(async move {
+                                                    Ok::<_, std::io::Error>(body_clone)
+                                                });
 
-                                            let mut multipart =
-                                                multer::Multipart::new(stream, boundary);
+                                                let mut multipart =
+                                                    multer::Multipart::new(stream, boundary);
 
-                                            let mut text_fields = HashMap::new();
+                                                let mut text_fields = HashMap::new();
+                                                let mut files = Vec::with_capacity(2);
+                                                while let Some(mut field) =
+                                                    multipart.next_field().await.unwrap_or(None)
+                                                {
+                                                    let name = field.name().map(|s| s.to_string());
 
-                                            while let Some(field) =
-                                                multipart.next_field().await.unwrap_or(None)
-                                            {
-                                                let name = field.name().map(|s| s.to_string());
+                                                    if field.file_name().is_none() {
+                                                        if let (Some(name), Ok(text)) =
+                                                            (name, field.text().await)
+                                                        {
+                                                            text_fields.insert(name, text);
+                                                        }
+                                                    } else {
+                                                        // file uploads
 
-                                                if field.file_name().is_none() {
-                                                    if let (Some(name), Ok(text)) =
-                                                        (name, field.text().await)
-                                                    {
-                                                        text_fields.insert(name, text);
+                                                        let content_type = field
+                                                            .content_type()
+                                                            .map(|value| value.to_string());
+                                                        let filename = format!("slime_file_{}",uuid::Uuid::new_v4());
+                                                        let temp_path =
+                                                            std::env::temp_dir().join(&filename);
+                                                        if let Ok(mut file) =
+                                                            tokio::fs::File::create(&temp_path).await
+                                                        {
+                                                            let mut size = 0;
+                                                            while let Ok(Some(chunk)) =
+                                                                field.chunk().await
+                                                            {
+                                                                size += chunk.len();
+                                                                if let Err(err) =
+                                                                    tokio::io::AsyncWriteExt::write_all(
+                                                                        &mut file, &chunk,
+                                                                    )
+                                                                    .await
+                                                                {
+                                                                    pyo3::exceptions::PyException::new_err(
+                                                                        err.to_string(),
+                                                                    );
+
+                                                                }
+                                                            }
+                                                            let file_content_type =content_type.unwrap_or("UNKNOWN".to_string());
+                                                            let extension: String = file_content_type.split("/").last().unwrap_or("UNKNOWN").to_string();
+                                                            files.push(SlimeFile {
+                                                                filename: filename,
+                                                                content_type: file_content_type,
+                                                                temp_path: temp_path,
+                                                                extension: extension,
+                                                                size: size,
+                                                            });
+                                                        } else {
+                                                            pyo3::exceptions::PyException::new_err(
+                                                                "Failed to create file",
+                                                            );
+                                                        }
                                                     }
-                                                } else {
-                                                    // TODO: file upload
                                                 }
+                                                file_body = Some(files);
+                                                form_body = Some(text_fields);
                                             }
-
-                                            form_body = Some(text_fields);
                                         }
                                     }
-                                }
 
-                                let query_params: HashMap<String, String> =
-                                    serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
-                                        .unwrap_or_default();
-                                let slime_request = SlimeRequest {
-                                    uri: parts.uri,
-                                    method: parts.method,
-                                    header: Arc::new(parts.headers),
-                                    body: body,
-                                    secret: secret_key,
-                                    template: template_engine,
-                                    query: query_params,
-                                    json_body: json_body,
-                                    form: form_body,
-                                    params: params,
-                                };
-                                if worker_tx
-                                    .send(PyRequest {
-                                        handler,
-                                        request: slime_request,
-                                        response: resp_tx,
-                                    })
-                                    .await
-                                    .is_err()
-                                {
-                                    return (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        "Worker down".to_string(),
-                                    )
-                                        .into_response();
-                                }
+                                    let query_params: HashMap<String, String> =
+                                        serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
+                                            .unwrap_or_default();
+                                    let slime_request = SlimeRequest {
+                                        uri: parts.uri,
+                                        method: parts.method,
+                                        header: Arc::new(parts.headers),
+                                        body: body,
+                                        secret: secret_key,
+                                        template: template_engine,
+                                        query: query_params,
+                                        json_body: json_body,
+                                        form: form_body,
+                                        files: file_body,
+                                        params: params,
+                                    };
+                                    if worker_tx
+                                        .send(PyRequest {
+                                            handler,
+                                            request: slime_request,
+                                            response: resp_tx,
+                                        })
+                                        .await
+                                        .is_err()
+                                    {
+                                        return (
+                                            StatusCode::INTERNAL_SERVER_ERROR,
+                                            "Worker down".to_string(),
+                                        )
+                                            .into_response();
+                                    }
 
-                                match resp_rx.await {
-                                    Ok(Ok(result)) => {
-                                        return result._into_response();
+                                    match resp_rx.await {
+                                        Ok(Ok(result)) => {
+                                            return result._into_response();
+                                        }
+                                        Ok(Err(err)) => {
+                                            (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                                                .into_response()
+                                        }
+                                        Err(_) => (
+                                            StatusCode::INTERNAL_SERVER_ERROR,
+                                            "Worker dropped".to_string(),
+                                        )
+                                            .into_response(),
                                     }
-                                    Ok(Err(err)) => {
-                                        (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
-                                            .into_response()
-                                    }
-                                    Err(_) => (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        "Worker dropped".to_string(),
-                                    )
-                                        .into_response(),
                                 }
-                            }
-                        },
+                            },
                     ),
                 );
             }
