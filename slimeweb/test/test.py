@@ -11,13 +11,10 @@ def land(req, resp):
 
 @app.route(path="/stream", method="GET")
 def stream_me(req, resp):
-    resp.stream(True)
-
-    def generator():
-        for i in [1, 2, 3, 4, 5]:
-            yield str(i) + "\n"
-
-    return generator()
+    stream_obj = resp.stream("text/plain")
+    for i in range(5):
+        stream_obj.send(str(i) + "\n")
+    # return resp.plain("hello")
 
 
 @app.route(path="/test", method="POST")

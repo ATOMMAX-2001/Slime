@@ -1201,6 +1201,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "hmac",
+ "mime",
  "minijinja",
  "multer",
  "pyo3",

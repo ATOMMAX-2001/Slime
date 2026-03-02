@@ -29,3 +29,4 @@ futures-util = "0.3.32"
 tokio-util = "0.7.18"
 uuid = { version="1.21.0",features=["v4"] }
 tokio-stream = "0.1.18"
+mime = "0.3.17"

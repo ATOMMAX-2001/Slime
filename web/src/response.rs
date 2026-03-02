@@ -1,3 +1,5 @@
+use std::{io, str::FromStr};
+
 use axum::{
     body::Body,
     http::{
@@ -7,16 +9,54 @@ use axum::{
     response::Response,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use bytes::Bytes;
 use hmac::{Hmac, Mac};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pythonize::depythonize;
 use sha2::Sha256;
+use tokio::sync::mpsc;
+
+#[pyclass]
+pub struct SlimeStream {
+    pub content_type: String,
+    pub sender: mpsc::Sender<Result<Bytes, io::Error>>,
+}
+
+impl SlimeStream {
+    pub fn new(content: String, tx: mpsc::Sender<Result<Bytes, io::Error>>) -> SlimeStream {
+        return SlimeStream {
+            content_type: content,
+            sender: tx,
+        };
+    }
+}
+
+#[pymethods]
+impl SlimeStream {
+    fn send(&self, py: Python, data: Py<PyAny>) -> PyResult<()> {
+        let value: serde_json::Value = depythonize(data.bind(py))?;
+        let json_str = serde_json::to_string(&value).map_err(|err| {
+            return PyErr::new::<pyo3::exceptions::PyException, _>(format!(
+                "Json serialization error: {}",
+                err
+            ));
+        })?;
+        let _ = self
+            .sender
+            .blocking_send(Ok(Bytes::copy_from_slice(json_str.as_bytes())));
+        return Ok(());
+    }
+    fn close(&self) -> PyResult<()> {
+        let _ = &self.sender.closed();
+        return Ok(());
+    }
+}
 
 #[pyclass]
 pub struct SlimeResponse {
     pub status: u16,
-    pub is_stream: bool,
+    pub is_stream: Option<mpsc::Receiver<Result<Bytes, io::Error>>>,
     pub headers: Py<PyDict>,
     pub header_size: usize,
     pub cookies: Vec<String>,
@@ -73,7 +113,7 @@ impl SlimeResponse {
     pub fn clone_obj(&self, py: Python) -> SlimeResponse {
         SlimeResponse {
             status: self.status,
-            is_stream: self.is_stream,
+            is_stream: None,
             headers: self.headers.clone_ref(py),
             header_size: self.header_size,
             cookies: self.cookies.to_owned(),
@@ -89,7 +129,7 @@ impl SlimeResponse {
     pub fn new(py: Python) -> SlimeResponse {
         SlimeResponse {
             status: 200,
-            is_stream: false,
+            is_stream: None,
             headers: PyDict::new(py).unbind(),
             header_size: 0,
             cookies: Vec::new(),
@@ -158,8 +198,16 @@ impl SlimeResponse {
         return Ok(());
     }
 
-    fn stream(&mut self, flag: bool) -> PyResult<()> {
-        self.is_stream = flag;
-        return Ok(());
+    fn stream(&mut self, content_type: String) -> PyResult<SlimeStream> {
+        // self.is_stream = true;
+        if let Err(_) = mime::Mime::from_str(content_type.as_str()) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Invalid content type has been passed".to_string(),
+            ));
+        }
+        let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(60);
+        self.is_stream = Some(rx);
+        self.content_type = content_type.to_owned();
+        return Ok(SlimeStream::new(content_type, tx));
     }
 }

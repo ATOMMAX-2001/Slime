@@ -17,12 +17,12 @@ use axum::{
 
 use axum::extract::Path;
 use minijinja::{AutoEscape, Environment, path_loader};
-use std::net::SocketAddr;
 use std::path::Path as OsPath;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
+use std::{io, net::SocketAddr};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot};
@@ -62,7 +62,10 @@ impl Route {
 
 pub enum PyResponse {
     Http(SlimeResponse),
-    Stream(mpsc::Receiver<Result<Bytes, String>>),
+    Stream {
+        recv: mpsc::Receiver<Result<Bytes, io::Error>>,
+        content: String,
+    },
 }
 
 pub struct PyRequest {
@@ -309,11 +312,14 @@ impl SlimeServer {
                                 Ok(Ok(PyResponse::Http(result))) => {
                                     return result._into_response();
                                 }
-                                Ok(Ok(PyResponse::Stream(result))) => {
+                                Ok(Ok(PyResponse::Stream {
+                                    recv: result,
+                                    content: content_type,
+                                })) => {
                                     let stream = ReceiverStream::new(result);
                                     let body = Body::from_stream(stream);
                                     return Response::builder()
-                                        .header("content-type", "text/plain")
+                                        .header("content-type", content_type)
                                         .body(body)
                                         .unwrap();
                                 }
@@ -378,9 +384,15 @@ pub fn spawn_python_workers(
                                 .call1(py, (req.request, response_py.clone_ref(py)))
                             {
                                 Ok(_) => {
-                                    let result = response_py.borrow(py).clone_obj(py);
-                                    if result.is_stream {
+                                    let mut result = response_py.borrow(py).clone_obj(py);
+                                    if result.is_stream.is_some() {
                                         // todo streaming data
+                                        if let Some(stream) = result.is_stream.take() {
+                                            let _ = req.response.send(Ok(PyResponse::Stream {
+                                                content: result.content_type.to_owned(),
+                                                recv: stream,
+                                            }));
+                                        }
                                     } else {
                                         let _ = req.response.send(Ok(PyResponse::Http(result)));
                                     }
