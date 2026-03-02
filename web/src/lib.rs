@@ -8,6 +8,7 @@ mod response;
 mod server;
 
 use server::SlimeServer;
+mod constant;
 
 #[pymodule]
 mod web {

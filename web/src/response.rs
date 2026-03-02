@@ -17,6 +17,8 @@ use pythonize::depythonize;
 use sha2::Sha256;
 use tokio::sync::mpsc;
 
+use crate::constant::SERVER as CONST_SERVER;
+
 #[pyclass]
 pub struct SlimeStreamResponse {
     pub content_type: String,
@@ -83,7 +85,7 @@ impl SlimeResponse {
         let mut result = Response::builder()
             .status(status)
             .header(CONTENT_TYPE, &self.content_type)
-            .header(SERVER, "SlimeV0.1");
+            .header(SERVER, CONST_SERVER);
         if self.header_size != 0 {
             result = Python::attach(|py| {
                 if let Ok(headers_result) = self.headers.bind(py).cast::<PyDict>() {

@@ -29,10 +29,10 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tower_http::services::ServeDir;
 
-use std::collections::HashMap;
-
+use crate::constant::SERVER;
 use crate::request::{SlimeFile, SlimeRequest};
 use crate::response::{SlimeResponse, SlimeStreamResponse};
+use std::collections::HashMap;
 
 pub struct Route {
     pub path: String,
@@ -327,7 +327,7 @@ impl SlimeServer {
                                 let body = Body::from_stream(stream);
                                 return Response::builder()
                                     .header("content-type", stream_content_type)
-                                    .header("Transfer-Encoding", "chunked")
+                                    .header("Server", SERVER)
                                     .body(body)
                                     .unwrap();
                             } else if worker_tx
