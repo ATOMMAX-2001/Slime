@@ -2,7 +2,9 @@ from typing import Callable, Dict
 
 
 class Routes:
-    def __init__(self, path: str = "/", method: str = "GET") -> None:
+    def __init__(
+        self, path: str = "/", method: str = "GET", stream: str | None = None
+    ) -> None:
         if path is None or method is None:
             raise ValueError("Path and Method should not be empty")
         if method.upper() not in ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]:
@@ -10,15 +12,17 @@ class Routes:
 
         self.path: str = path
         self.method: str = method
+        self.stream: str | None = stream
 
     def __hash__(self) -> int:
-        return hash((self.path, self.method))
+        return hash((self.path, self.method, self.stream))
 
     def __eq__(self, value: object) -> bool:
         return (
             isinstance(value, Routes)
             and self.path == value.path
             and self.method == value.method
+            and self.stream == value.stream
         )
 
     def __str__(self) -> str:
@@ -43,9 +47,7 @@ class Slime:
         self.__routes: Dict[Routes, Callable] = {}
 
     def route(
-        self,
-        path: str = "/",
-        method: str = "GET",
+        self, path: str = "/", method: str = "GET", stream: str | None = None
     ) -> Callable:
         def wrapper(route_handler) -> Callable:
             if route_handler is None or not callable(route_handler):
@@ -53,7 +55,7 @@ class Slime:
                     f"View handler should be a function for [Path: {path}, Method: {method}]"
                 )
 
-            self.__routes[Routes(path, method)] = route_handler
+            self.__routes[Routes(path, method, stream)] = route_handler
             return route_handler
 
         return wrapper

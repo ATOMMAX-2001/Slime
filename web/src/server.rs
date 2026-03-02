@@ -32,11 +32,12 @@ use tower_http::services::ServeDir;
 use std::collections::HashMap;
 
 use crate::request::{SlimeFile, SlimeRequest};
-use crate::response::SlimeResponse;
+use crate::response::{SlimeResponse, SlimeStreamResponse};
 
 pub struct Route {
     pub path: String,
     pub method: String,
+    pub stream: Option<String>,
     pub handler: Arc<Py<PyAny>>,
 }
 
@@ -45,33 +46,38 @@ impl Clone for Route {
         Self {
             path: self.path.clone(),
             method: self.method.clone(),
+            stream: self.stream.to_owned(),
             handler: self.handler.clone(),
         }
     }
 }
 
 impl Route {
-    pub fn new(path: String, method: String, handler: Py<PyAny>) -> Self {
+    pub fn new(path: String, method: String, stream: Option<String>, handler: Py<PyAny>) -> Self {
         Self {
             path,
             method,
+            stream,
             handler: Arc::new(handler),
         }
     }
 }
 
-pub enum PyResponse {
-    Http(SlimeResponse),
-    Stream {
-        recv: mpsc::Receiver<Result<Bytes, io::Error>>,
-        content: String,
-    },
+pub enum PyRequestWorker {
+    Http(PyRequest),
+    Stream(PyRequestStream),
+}
+
+pub struct PyRequestStream {
+    pub handler: Arc<Py<PyAny>>,
+    pub request: SlimeRequest,
+    pub response: SlimeStreamResponse,
 }
 
 pub struct PyRequest {
     pub handler: Arc<Py<PyAny>>,
     pub request: SlimeRequest,
-    pub response: oneshot::Sender<PyResult<PyResponse>>,
+    pub response: oneshot::Sender<PyResult<SlimeResponse>>,
 }
 
 pub struct SlimeServer {
@@ -80,7 +86,7 @@ pub struct SlimeServer {
     routes: Vec<Route>,
     host: String,
     port: usize,
-    worker_txs: Arc<Vec<mpsc::Sender<PyRequest>>>,
+    worker_txs: Arc<Vec<mpsc::Sender<PyRequestWorker>>>,
     request_counter: Arc<AtomicUsize>,
     secret_key: Arc<Vec<u8>>,
     template: Arc<Environment<'static>>,
@@ -90,7 +96,7 @@ impl SlimeServer {
     pub fn new(
         host: String,
         port: usize,
-        worker_txs: Arc<Vec<mpsc::Sender<PyRequest>>>,
+        worker_txs: Arc<Vec<mpsc::Sender<PyRequestWorker>>>,
         secret_key: String,
         filename: String,
         is_dev: bool,
@@ -130,8 +136,9 @@ impl SlimeServer {
         for (key, value) in routes {
             let path: String = key.getattr("path")?.extract()?;
             let method: String = key.getattr("method")?.extract()?;
+            let stream: Option<String> = key.getattr("stream")?.extract()?;
             let handler = value.unbind();
-            routes_collection.push(Route::new(path, method, handler));
+            routes_collection.push(Route::new(path, method, stream, handler));
         }
         self.routes = routes_collection;
         Ok(())
@@ -146,6 +153,7 @@ impl SlimeServer {
             let route = route.clone();
             let path = route.path;
             let method = route.method;
+            let stream_content = route.stream;
             let handler = route.handler.clone();
             let worker_txs = self.worker_txs.clone();
             let request_counter = self.request_counter.clone();
@@ -173,7 +181,7 @@ impl SlimeServer {
 
                             let (resp_tx, resp_rx) = oneshot::channel();
                             let (parts, raw_body) = request.into_parts();
-                            let content_type = parts
+                            let content_type = &parts
                                 .headers
                                 .get("content-type")
                                 .and_then(|value| value.to_str().ok())
@@ -186,7 +194,7 @@ impl SlimeServer {
                             let mut json_body: Option<serde_json::Value> = None;
                             let mut form_body: Option<HashMap<String, String>> = None;
                             let mut file_body: Option<Vec<SlimeFile>> = None;
-                            if content_type != "" {
+                            if content_type != &"" {
                                 if content_type.starts_with("application/json") {
                                     json_body =
                                         serde_json::from_slice::<serde_json::Value>(&body).ok();
@@ -291,12 +299,43 @@ impl SlimeServer {
                                 files: file_body,
                                 params: params,
                             };
-                            if worker_tx
-                                .send(PyRequest {
+
+                            // send request to python workers
+                            if stream_content.is_some() {
+                                let stream_content_type = stream_content.unwrap();
+                                let (stream_tx, stream_rx) =
+                                    mpsc::channel::<Result<Bytes, io::Error>>(60);
+                                if worker_tx
+                                    .send(PyRequestWorker::Stream(PyRequestStream {
+                                        handler,
+                                        request: slime_request,
+                                        response: SlimeStreamResponse {
+                                            content_type: stream_content_type.to_owned(),
+                                            sender: stream_tx,
+                                        },
+                                    }))
+                                    .await
+                                    .is_err()
+                                {
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "Worker down".to_string(),
+                                    )
+                                        .into_response();
+                                }
+                                let stream = ReceiverStream::new(stream_rx);
+                                let body = Body::from_stream(stream);
+                                return Response::builder()
+                                    .header("content-type", stream_content_type)
+                                    .header("Transfer-Encoding", "chunked")
+                                    .body(body)
+                                    .unwrap();
+                            } else if worker_tx
+                                .send(PyRequestWorker::Http(PyRequest {
                                     handler,
                                     request: slime_request,
                                     response: resp_tx,
-                                })
+                                }))
                                 .await
                                 .is_err()
                             {
@@ -309,19 +348,8 @@ impl SlimeServer {
 
                             // to client side response
                             match resp_rx.await {
-                                Ok(Ok(PyResponse::Http(result))) => {
+                                Ok(Ok(result)) => {
                                     return result._into_response();
-                                }
-                                Ok(Ok(PyResponse::Stream {
-                                    recv: result,
-                                    content: content_type,
-                                })) => {
-                                    let stream = ReceiverStream::new(result);
-                                    let body = Body::from_stream(stream);
-                                    return Response::builder()
-                                        .header("content-type", content_type)
-                                        .body(body)
-                                        .unwrap();
                                 }
                                 Ok(Err(err)) => {
                                     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
@@ -361,50 +389,42 @@ async fn shutdown_signal() {
     signal::ctrl_c().await.expect("Failed to listen for ctrl_c");
 }
 
-pub fn spawn_python_workers(
-    worker_count: usize,
-    runtime: &tokio::runtime::Handle,
-) -> Arc<Vec<mpsc::Sender<PyRequest>>> {
+pub fn spawn_python_workers(worker_count: usize) -> Arc<Vec<mpsc::Sender<PyRequestWorker>>> {
     let mut worker_txs = Vec::with_capacity(worker_count);
     let pool = ThreadPoolBuilder::new()
         .num_threads(worker_count)
         .build()
         .unwrap();
     for _ in 0..worker_count {
-        let (tx, mut rx) = mpsc::channel::<PyRequest>(1024);
+        let (tx, mut rx) = mpsc::channel::<PyRequestWorker>(1024);
         worker_txs.push(tx.clone());
-        let runtime_handler = runtime.clone();
         pool.spawn(move || {
             Python::attach(|py| {
-                while let Some(req) = py.detach(|| rx.blocking_recv()) {
-                    match Py::new(py, SlimeResponse::new(py)) {
-                        Ok(response_py) => {
-                            match req
-                                .handler
-                                .call1(py, (req.request, response_py.clone_ref(py)))
-                            {
-                                Ok(_) => {
-                                    let mut result = response_py.borrow(py).clone_obj(py);
-                                    if result.is_stream.is_some() {
-                                        // todo streaming data
-                                        if let Some(stream) = result.is_stream.take() {
-                                            let _ = req.response.send(Ok(PyResponse::Stream {
-                                                content: result.content_type.to_owned(),
-                                                recv: stream,
-                                            }));
-                                        }
-                                    } else {
-                                        let _ = req.response.send(Ok(PyResponse::Http(result)));
+                while let Some(req_worker) = py.detach(|| rx.blocking_recv()) {
+                    if let PyRequestWorker::Http(req) = req_worker {
+                        match Py::new(py, SlimeResponse::new(py)) {
+                            Ok(response_py) => {
+                                match req
+                                    .handler
+                                    .call1(py, (req.request, response_py.clone_ref(py)))
+                                {
+                                    Ok(_) => {
+                                        let result = response_py.borrow(py).clone_obj(py);
+                                        let _ = req.response.send(Ok(result));
+                                    }
+                                    Err(err) => {
+                                        let _ = req.response.send(Err(err));
                                     }
                                 }
-                                Err(err) => {
-                                    let _ = req.response.send(Err(err));
-                                }
+                            }
+                            Err(err) => {
+                                let _ = req.response.send(Err(err));
                             }
                         }
-                        Err(err) => {
-                            let _ = req.response.send(Err(err));
-                        }
+                    } else if let PyRequestWorker::Stream(req) = req_worker {
+                        let _ = req.handler.call1(py, (req.request, req.response));
+                    } else {
+                        // websocket in future
                     }
                 }
             });

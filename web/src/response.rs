@@ -18,14 +18,14 @@ use sha2::Sha256;
 use tokio::sync::mpsc;
 
 #[pyclass]
-pub struct SlimeStream {
+pub struct SlimeStreamResponse {
     pub content_type: String,
     pub sender: mpsc::Sender<Result<Bytes, io::Error>>,
 }
 
-impl SlimeStream {
-    pub fn new(content: String, tx: mpsc::Sender<Result<Bytes, io::Error>>) -> SlimeStream {
-        return SlimeStream {
+impl SlimeStreamResponse {
+    pub fn new(content: String, tx: mpsc::Sender<Result<Bytes, io::Error>>) -> SlimeStreamResponse {
+        return SlimeStreamResponse {
             content_type: content,
             sender: tx,
         };
@@ -33,7 +33,12 @@ impl SlimeStream {
 }
 
 #[pymethods]
-impl SlimeStream {
+impl SlimeStreamResponse {
+    #[getter]
+    fn content_type(&self) -> PyResult<String> {
+        return Ok(self.content_type.to_owned());
+    }
+
     fn send(&self, py: Python, data: Py<PyAny>) -> PyResult<()> {
         let value: serde_json::Value = depythonize(data.bind(py))?;
         let json_str = serde_json::to_string(&value).map_err(|err| {
@@ -198,7 +203,7 @@ impl SlimeResponse {
         return Ok(());
     }
 
-    fn stream(&mut self, content_type: String) -> PyResult<SlimeStream> {
+    fn stream(&mut self, content_type: String) -> PyResult<SlimeStreamResponse> {
         // self.is_stream = true;
         if let Err(_) = mime::Mime::from_str(content_type.as_str()) {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -208,6 +213,6 @@ impl SlimeResponse {
         let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(60);
         self.is_stream = Some(rx);
         self.content_type = content_type.to_owned();
-        return Ok(SlimeStream::new(content_type, tx));
+        return Ok(SlimeStreamResponse::new(content_type, tx));
     }
 }

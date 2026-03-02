@@ -38,8 +38,8 @@ mod web {
             .build()?;
 
         let runtime_handler = runtime.handle();
-        let worker_txs = server::spawn_python_workers(worker_count, runtime_handler);
-
+        let worker_txs = server::spawn_python_workers(worker_count);
+        // let (async_tx, async_rx) = oneshot::channel::<P>();
         let mut server =
             SlimeServer::new(host, port, worker_txs, secret_key, slime_filename, is_dev);
 
