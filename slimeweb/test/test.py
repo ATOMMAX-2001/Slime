@@ -9,10 +9,11 @@ def land(req, resp):
     return resp.html(html)
 
 
-@app.route(path="/stream", method="GET", stream="application/json")
+@app.route(path="/stream", method="GET", stream="text/plain")
 def stream_me(req, resp):
+    resp.start_stream()
     for i in range(5):
-        resp.send({"status": i})
+        resp.send(i)
     resp.close()
 
 

@@ -29,6 +29,7 @@ class Routes:
         return f"""
             Path: {self.path}
             Method: {self.method}
+            {f"Stream: {self.stream}" if self.stream is not None else ""}
         """
 
 
