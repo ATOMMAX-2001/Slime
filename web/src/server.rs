@@ -90,6 +90,7 @@ pub struct SlimeServer {
     request_counter: Arc<AtomicUsize>,
     secret_key: Arc<Vec<u8>>,
     template: Arc<Environment<'static>>,
+    tokio_handler: tokio::runtime::Handle,
 }
 
 impl SlimeServer {
@@ -100,6 +101,7 @@ impl SlimeServer {
         secret_key: String,
         filename: String,
         is_dev: bool,
+        tokio_runtime_handler: tokio::runtime::Handle,
     ) -> Self {
         let env = SlimeServer::get_template_environment(&filename);
         Self {
@@ -112,6 +114,7 @@ impl SlimeServer {
             request_counter: Arc::new(AtomicUsize::new(0)),
             secret_key: Arc::new(secret_key.as_bytes().to_vec()),
             template: Arc::new(env),
+            tokio_handler: tokio_runtime_handler,
         }
     }
     fn get_template_environment(filename: &String) -> Environment<'static> {
@@ -162,6 +165,7 @@ impl SlimeServer {
             let mut template_engine = self.template.clone();
             let is_dev = self.is_dev;
             let filename = self.filename.to_owned();
+            let tokio_runtime = self.tokio_handler.clone();
             server_router = server_router.route(
                 &path,
                 any(
@@ -304,15 +308,20 @@ impl SlimeServer {
                             if stream_content.is_some() {
                                 let stream_content_type = stream_content.unwrap();
                                 let (stream_tx, stream_rx) =
-                                    mpsc::channel::<Result<Bytes, io::Error>>(60);
+                                    mpsc::channel::<Result<Bytes, io::Error>>(100);
+                                let (started_tx, mut started_rx) =
+                                    mpsc::channel::<HashMap<String, String>>(1);
+                                let new_slime_stream_resonse = SlimeStreamResponse::new(
+                                    stream_content_type.to_owned(),
+                                    stream_tx,
+                                    tokio_runtime.clone(),
+                                    started_tx,
+                                );
                                 if worker_tx
                                     .send(PyRequestWorker::Stream(PyRequestStream {
                                         handler,
                                         request: slime_request,
-                                        response: SlimeStreamResponse {
-                                            content_type: stream_content_type.to_owned(),
-                                            sender: stream_tx,
-                                        },
+                                        response: new_slime_stream_resonse,
                                     }))
                                     .await
                                     .is_err()
@@ -323,13 +332,17 @@ impl SlimeServer {
                                     )
                                         .into_response();
                                 }
-                                let stream = ReceiverStream::new(stream_rx);
-                                let body = Body::from_stream(stream);
-                                return Response::builder()
-                                    .header("content-type", stream_content_type)
-                                    .header("Server", SERVER)
-                                    .body(body)
-                                    .unwrap();
+                                if let Some(headers) = started_rx.recv().await {
+                                    let mut new_response = Response::builder()
+                                        .header("content-type", stream_content_type)
+                                        .header("Server", SERVER);
+                                    for (key, value) in headers {
+                                        new_response = new_response.header(key, value);
+                                    }
+                                    let stream = ReceiverStream::new(stream_rx);
+                                    let body = Body::from_stream(stream);
+                                    return new_response.body(body).unwrap();
+                                }
                             } else if worker_tx
                                 .send(PyRequestWorker::Http(PyRequest {
                                     handler,

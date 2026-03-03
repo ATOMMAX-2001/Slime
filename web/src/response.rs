@@ -1,4 +1,4 @@
-use std::{io, str::FromStr};
+use std::{collections::HashMap, io};
 
 use axum::{
     body::Body,
@@ -23,13 +23,26 @@ use crate::constant::SERVER as CONST_SERVER;
 pub struct SlimeStreamResponse {
     pub content_type: String,
     pub sender: mpsc::Sender<Result<Bytes, io::Error>>,
+    pub tokio_handler: tokio::runtime::Handle,
+    pub headers: HashMap<String, String>,
+    pub is_started: bool,
+    pub header_sender: mpsc::Sender<HashMap<String, String>>,
 }
 
 impl SlimeStreamResponse {
-    pub fn new(content: String, tx: mpsc::Sender<Result<Bytes, io::Error>>) -> SlimeStreamResponse {
+    pub fn new(
+        content: String,
+        tx: mpsc::Sender<Result<Bytes, io::Error>>,
+        rt_handle: tokio::runtime::Handle,
+        header_tx: mpsc::Sender<HashMap<String, String>>,
+    ) -> SlimeStreamResponse {
         return SlimeStreamResponse {
             content_type: content,
             sender: tx,
+            headers: HashMap::with_capacity(2),
+            is_started: false,
+            tokio_handler: rt_handle,
+            header_sender: header_tx,
         };
     }
 }
@@ -41,7 +54,43 @@ impl SlimeStreamResponse {
         return Ok(self.content_type.to_owned());
     }
 
+    #[getter]
+    fn headers(&self) -> PyResult<HashMap<String, String>> {
+        return Ok(self.headers.to_owned());
+    }
+
+    fn set_header(&mut self, key: String, value: String) -> PyResult<()> {
+        if self.is_started {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "You can only set headers before the stream start",
+            ));
+        }
+        self.headers.insert(key, value);
+        return Ok(());
+    }
+
+    fn start_stream(&mut self) -> PyResult<()> {
+        if self.is_started {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "You can start the stream only once",
+            ));
+        }
+        self.is_started = true;
+        let header_tx = self.header_sender.clone();
+        let headers = self.headers.to_owned();
+        self.tokio_handler.spawn(async move {
+            let _ = header_tx.send(headers).await;
+        });
+
+        return Ok(());
+    }
+
     fn send(&self, py: Python, data: Py<PyAny>) -> PyResult<()> {
+        if !self.is_started {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "You need to start the stream before streaming the data",
+            ));
+        }
         let value: serde_json::Value = depythonize(data.bind(py))?;
         let json_str = serde_json::to_string(&value).map_err(|err| {
             return PyErr::new::<pyo3::exceptions::PyException, _>(format!(
@@ -49,9 +98,13 @@ impl SlimeStreamResponse {
                 err
             ));
         })?;
-        let _ = self
-            .sender
-            .blocking_send(Ok(Bytes::copy_from_slice(json_str.as_bytes())));
+        let tx = self.sender.clone();
+        self.tokio_handler.spawn(async move {
+            let _ = tx
+                .send(Ok(Bytes::copy_from_slice(json_str.as_bytes())))
+                .await;
+        });
+
         return Ok(());
     }
     fn close(&self) -> PyResult<()> {
@@ -203,18 +256,5 @@ impl SlimeResponse {
         self.body = Some(body);
         self.content_type = "text/html; charset=utf-8".to_string();
         return Ok(());
-    }
-
-    fn stream(&mut self, content_type: String) -> PyResult<SlimeStreamResponse> {
-        // self.is_stream = true;
-        if let Err(_) = mime::Mime::from_str(content_type.as_str()) {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Invalid content type has been passed".to_string(),
-            ));
-        }
-        let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(60);
-        self.is_stream = Some(rx);
-        self.content_type = content_type.to_owned();
-        return Ok(SlimeStreamResponse::new(content_type, tx));
     }
 }
