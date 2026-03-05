@@ -38,7 +38,7 @@ pub struct Route {
     pub path: String,
     pub method: String,
     pub stream: Option<String>,
-    pub handler: Arc<Py<PyAny>>,
+    pub handler: Arc<Vec<Py<PyAny>>>,
 }
 
 impl Clone for Route {
@@ -53,7 +53,12 @@ impl Clone for Route {
 }
 
 impl Route {
-    pub fn new(path: String, method: String, stream: Option<String>, handler: Py<PyAny>) -> Self {
+    pub fn new(
+        path: String,
+        method: String,
+        stream: Option<String>,
+        handler: Vec<Py<PyAny>>,
+    ) -> Self {
         Self {
             path,
             method,
@@ -69,13 +74,13 @@ pub enum PyRequestWorker {
 }
 
 pub struct PyRequestStream {
-    pub handler: Arc<Py<PyAny>>,
+    pub handler: Arc<Vec<Py<PyAny>>>,
     pub request: SlimeRequest,
     pub response: SlimeStreamResponse,
 }
 
 pub struct PyRequest {
-    pub handler: Arc<Py<PyAny>>,
+    pub handler: Arc<Vec<Py<PyAny>>>,
     pub request: SlimeRequest,
     pub response: oneshot::Sender<PyResult<SlimeResponse>>,
 }
@@ -140,8 +145,19 @@ impl SlimeServer {
             let path: String = key.getattr("path")?.extract()?;
             let method: String = key.getattr("method")?.extract()?;
             let stream: Option<String> = key.getattr("stream")?.extract()?;
-            let handler = value.unbind();
-            routes_collection.push(Route::new(path, method, stream, handler));
+            let handler = value.cast::<PyDict>().unwrap();
+            let mut handlers: Vec<Py<PyAny>> = Vec::with_capacity(3);
+            if let Ok(Some(before_handler)) = handler.get_item("before") {
+                handlers.push(before_handler.unbind());
+            }
+            if let Ok(Some(request_handler)) = handler.get_item("handler") {
+                handlers.push(request_handler.unbind());
+            }
+            if let Ok(Some(after_handler)) = handler.get_item("after") {
+                handlers.push(after_handler.unbind());
+            }
+
+            routes_collection.push(Route::new(path, method, stream, handlers));
         }
         self.routes = routes_collection;
         Ok(())
@@ -417,25 +433,36 @@ pub fn spawn_python_workers(worker_count: usize) -> Arc<Vec<mpsc::Sender<PyReque
                     if let PyRequestWorker::Http(req) = req_worker {
                         match Py::new(py, SlimeResponse::new(py)) {
                             Ok(response_py) => {
-                                match req
-                                    .handler
-                                    .call1(py, (req.request, response_py.clone_ref(py)))
-                                {
-                                    Ok(_) => {
-                                        let result = response_py.borrow(py).clone_obj(py);
-                                        let _ = req.response.send(Ok(result));
-                                    }
-                                    Err(err) => {
-                                        let _ = req.response.send(Err(err));
+                                let request_obj = Py::new(py, req.request).unwrap();
+                                for handler_method in 0..req.handler.len() {
+                                    match req.handler[handler_method].call1(
+                                        py,
+                                        (request_obj.clone_ref(py), response_py.clone_ref(py)),
+                                    ) {
+                                        Ok(_) => {
+                                            // let result = response_py.borrow(py).clone_obj(py);
+                                            // let _ = req.response.send(Ok(result));
+                                        }
+                                        Err(err) => {
+                                            println!("{}", err);
+                                            // let _ = req.response.send(Err(err));
+                                        }
                                     }
                                 }
+                                let result = response_py.borrow(py).clone_obj(py);
+                                let _ = req.response.send(Ok(result));
                             }
                             Err(err) => {
                                 let _ = req.response.send(Err(err));
                             }
                         }
                     } else if let PyRequestWorker::Stream(req) = req_worker {
-                        let _ = req.handler.call1(py, (req.request, req.response));
+                        let request_obj = Py::new(py, req.request).unwrap();
+                        let response_obj = Py::new(py, req.response).unwrap();
+                        for handler_method in 0..req.handler.len() {
+                            let _ = req.handler[handler_method]
+                                .call1(py, (request_obj.clone_ref(py), response_obj.clone_ref(py)));
+                        }
                     } else {
                         // websocket in future
                     }
