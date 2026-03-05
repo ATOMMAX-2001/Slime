@@ -1,19 +1,17 @@
 use axum::{
     Router,
+    body::{Body, to_bytes},
+    extract::ConnectInfo,
+    http::Request,
     http::StatusCode,
     response::{IntoResponse, Response},
+    routing::any,
 };
 
 use bytes::Bytes;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rayon::ThreadPoolBuilder;
-
-use axum::{
-    body::{Body, to_bytes},
-    http::Request,
-    routing::any,
-};
 
 use axum::extract::Path;
 use minijinja::{AutoEscape, Environment, path_loader};
@@ -188,12 +186,20 @@ impl SlimeServer {
             let filename = self.filename.to_owned();
             let tokio_runtime = self.tokio_handler.clone();
             server_router = server_router.route(
-                &path,
+                &path.to_owned(),
                 any(
-                    move |Path(params): Path<HashMap<String, String>>, request: Request<Body>| {
+                    move |ConnectInfo(client): ConnectInfo<SocketAddr>,
+                          Path(params): Path<HashMap<String, String>>,
+                          request: Request<Body>| {
                         let handler = handler.clone();
                         let worker_txs = worker_txs.clone();
                         if is_dev {
+                            println!(
+                                "INFO: {} => {} {}",
+                                &method,
+                                &path,
+                                &client.ip().to_string()
+                            );
                             template_engine =
                                 Arc::new(SlimeServer::get_template_environment(&filename));
                         }
@@ -313,6 +319,7 @@ impl SlimeServer {
                                     .unwrap_or_default();
                             let slime_request = SlimeRequest {
                                 uri: parts.uri,
+                                client: client.ip(),
                                 method: parts.method,
                                 header: Arc::new(parts.headers),
                                 body: body,
@@ -412,9 +419,12 @@ impl SlimeServer {
         let listener = TcpListener::bind(address).await.unwrap();
 
         println!("Slime server is running at {}", address);
-        let _ = axum::serve(listener, server_router)
-            .with_graceful_shutdown(shutdown_signal())
-            .await;
+        let _ = axum::serve(
+            listener,
+            server_router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal())
+        .await;
         Ok(())
     }
 }
@@ -436,36 +446,53 @@ pub fn spawn_python_workers(worker_count: usize) -> Arc<Vec<mpsc::Sender<PyReque
             Python::attach(|py| {
                 while let Some(req_worker) = py.detach(|| rx.blocking_recv()) {
                     if let PyRequestWorker::Http(req) = req_worker {
-                        match Py::new(py, SlimeResponse::new(py)) {
-                            Ok(response_py) => {
-                                let request_obj = Py::new(py, req.request).unwrap();
+                        match (
+                            Py::new(py, SlimeResponse::new(py)),
+                            Py::new(py, req.request),
+                        ) {
+                            (Ok(response_py), Ok(request_py)) => {
                                 for handler_method in 0..req.handler.len() {
-                                    match req.handler[handler_method]
-                                        .call1(py, (&request_obj, &response_py))
+                                    if let Err(err) = req.handler[handler_method]
+                                        .call1(py, (&request_py, &response_py))
                                     {
-                                        Ok(_) => {
-                                            // let result = response_py.borrow(py).clone_obj(py);
-                                            // let _ = req.response.send(Ok(result));
-                                        }
-                                        Err(err) => {
-                                            println!("ERROR: {}", err);
-                                            // let _ = req.response.send(Err(err));
-                                        }
+                                        let path =
+                                            request_py.getattr(py, "path").unwrap().to_string();
+                                        let method =
+                                            request_py.getattr(py, "method").unwrap().to_string();
+                                        println!(
+                                            "ERROR @ path: [{}] for method [{}]: {}",
+                                            path, method, err
+                                        );
+                                        break;
                                     }
                                 }
                                 let result = response_py.borrow(py).clone_obj(py);
                                 let _ = req.response.send(Ok(result));
                             }
-                            Err(err) => {
-                                let _ = req.response.send(Err(err));
+                            _ => {
+                                let _ =
+                                    req.response
+                                        .send(Err(pyo3::exceptions::PyException::new_err(
+                                            "Cant able to create request and response handler"
+                                                .to_string(),
+                                        )));
                             }
                         }
                     } else if let PyRequestWorker::Stream(req) = req_worker {
-                        let request_obj = Py::new(py, req.request).unwrap();
-                        let response_obj = Py::new(py, req.response).unwrap();
-                        for handler_method in 0..req.handler.len() {
-                            let _ = req.handler[handler_method]
-                                .call1(py, (&request_obj, &response_obj));
+                        match (Py::new(py, req.request), Py::new(py, req.response)) {
+                            (Ok(request_py), Ok(response_py)) => {
+                                for handler_method in 0..req.handler.len() {
+                                    if let Err(err) = req.handler[handler_method]
+                                        .call1(py, (&request_py, &response_py))
+                                    {
+                                        println!("ERROR: {}", err);
+                                    }
+                                    break;
+                                }
+                            }
+                            _ => {
+                                println!("ERROR: Cant able to create reqeust and response handler");
+                            }
                         }
                     } else {
                         // websocket in future

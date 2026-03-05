@@ -8,6 +8,7 @@ use pyo3::types::{PyBytes, PyDict};
 use pythonize::{depythonize, pythonize};
 use sha2::Sha256;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
@@ -62,6 +63,7 @@ impl SlimeFile {
 #[pyclass]
 pub struct SlimeRequest {
     pub uri: http::Uri,
+    pub client: IpAddr,
     pub method: http::Method,
     pub header: Arc<http::HeaderMap>,
     pub body: Bytes,
@@ -100,6 +102,11 @@ impl SlimeRequest {
     #[getter]
     fn path(&self) -> String {
         return self.uri.to_string();
+    }
+
+    #[getter]
+    fn client(&self) -> String {
+        return self.client.to_string();
     }
 
     #[getter]
