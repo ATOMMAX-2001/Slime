@@ -80,6 +80,7 @@ impl SlimeStreamResponse {
         let headers = self.headers.to_owned();
         self.tokio_handler.spawn(async move {
             let _ = header_tx.send(headers).await;
+            header_tx.closed().await;
         });
 
         return Ok(());

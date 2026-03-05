@@ -11,12 +11,12 @@ def land(req, resp):
 
 @app.middle_after(path="/", method="GET")
 def land_after(req, resp):
-    resp.set_header("SERVERMID1", "SERVERV>!")
+    resp.set_header("BEFORE", "Request")
 
 
 @app.middle_before(path="/", method="GET")
 def land_before(req, resp):
-    resp.set_header("SERVERMID", "SERVERV>@!")
+    resp.set_header("AFTER", "REQUEST")
 
 
 @app.route(path="/stream", method="GET", stream="text/plain")

@@ -105,9 +105,9 @@ impl SlimeServer {
         filename: String,
         is_dev: bool,
         tokio_runtime_handler: tokio::runtime::Handle,
-    ) -> Self {
+    ) -> SlimeServer {
         let env = SlimeServer::get_template_environment(&filename);
-        Self {
+        SlimeServer {
             filename: filename,
             is_dev: is_dev,
             routes: Vec::with_capacity(5),
@@ -191,8 +191,6 @@ impl SlimeServer {
                     move |ConnectInfo(client): ConnectInfo<SocketAddr>,
                           Path(params): Path<HashMap<String, String>>,
                           request: Request<Body>| {
-                        let handler = handler.clone();
-                        let worker_txs = worker_txs.clone();
                         if is_dev {
                             println!(
                                 "INFO: {} => {} {}",
@@ -345,18 +343,20 @@ impl SlimeServer {
                                     tokio_runtime.clone(),
                                     started_tx,
                                 );
-                                if worker_tx
+                                if let Err(err) = worker_tx
                                     .send(PyRequestWorker::Stream(PyRequestStream {
                                         handler,
                                         request: slime_request,
                                         response: new_slime_stream_resonse,
                                     }))
                                     .await
-                                    .is_err()
                                 {
                                     return (
                                         StatusCode::INTERNAL_SERVER_ERROR,
-                                        "Worker down".to_string(),
+                                        format!(
+                                            "Worker cant able to handle the request (reason) => {}",
+                                            err.to_string()
+                                        ),
                                     )
                                         .into_response();
                                 }
@@ -371,20 +371,21 @@ impl SlimeServer {
                                     let body = Body::from_stream(stream);
                                     return new_response.body(body).unwrap();
                                 }
-                            } else if worker_tx
-                                .send(PyRequestWorker::Http(PyRequest {
-                                    handler,
-                                    request: slime_request,
-                                    response: resp_tx,
-                                }))
-                                .await
-                                .is_err()
-                            {
-                                return (
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    "Worker down".to_string(),
-                                )
-                                    .into_response();
+                            } else {
+                                if let Err(err) = worker_tx
+                                    .send(PyRequestWorker::Http(PyRequest {
+                                        handler,
+                                        request: slime_request,
+                                        response: resp_tx,
+                                    }))
+                                    .await
+                                {
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        format!("Worker down cant able to handle the request (reason) => {}",err.to_string()),
+                                    )
+                                        .into_response();
+                                }
                             }
 
                             // to client side response
@@ -396,14 +397,11 @@ impl SlimeServer {
                                     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
                                         .into_response()
                                 }
-                                Err(err) => {
-                                    dbg!(&err);
-                                    (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        "Worker dropped".to_string(),
-                                    )
-                                        .into_response()
-                                }
+                                Err(_) => (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    "Worker cant able to handle the response".to_string(),
+                                )
+                                    .into_response(),
                             }
                         }
                     },
@@ -440,66 +438,72 @@ pub fn spawn_python_workers(worker_count: usize) -> Arc<Vec<mpsc::Sender<PyReque
         .build()
         .unwrap();
     for _ in 0..worker_count {
-        let (tx, mut rx) = mpsc::channel::<PyRequestWorker>(1024);
+        let (tx, rx) = mpsc::channel::<PyRequestWorker>(1024 * 1024 * 10);
         worker_txs.push(tx.clone());
-        pool.spawn(move || {
-            Python::attach(|py| {
-                while let Some(req_worker) = py.detach(|| rx.blocking_recv()) {
-                    if let PyRequestWorker::Http(req) = req_worker {
-                        match (
-                            Py::new(py, SlimeResponse::new(py)),
-                            Py::new(py, req.request),
-                        ) {
-                            (Ok(response_py), Ok(request_py)) => {
-                                for handler_method in 0..req.handler.len() {
-                                    if let Err(err) = req.handler[handler_method]
-                                        .call1(py, (&request_py, &response_py))
-                                    {
-                                        let path =
-                                            request_py.getattr(py, "path").unwrap().to_string();
-                                        let method =
-                                            request_py.getattr(py, "method").unwrap().to_string();
-                                        println!(
-                                            "ERROR @ path: [{}] for method [{}]: {}",
-                                            path, method, err
-                                        );
-                                        break;
-                                    }
-                                }
-                                let result = response_py.borrow(py).clone_obj(py);
-                                let _ = req.response.send(Ok(result));
-                            }
-                            _ => {
-                                let _ =
-                                    req.response
-                                        .send(Err(pyo3::exceptions::PyException::new_err(
-                                            "Cant able to create request and response handler"
-                                                .to_string(),
-                                        )));
-                            }
-                        }
-                    } else if let PyRequestWorker::Stream(req) = req_worker {
-                        match (Py::new(py, req.request), Py::new(py, req.response)) {
-                            (Ok(request_py), Ok(response_py)) => {
-                                for handler_method in 0..req.handler.len() {
-                                    if let Err(err) = req.handler[handler_method]
-                                        .call1(py, (&request_py, &response_py))
-                                    {
-                                        println!("ERROR: {}", err);
-                                    }
-                                    break;
-                                }
-                            }
-                            _ => {
-                                println!("ERROR: Cant able to create reqeust and response handler");
-                            }
-                        }
-                    } else {
-                        // websocket in future
-                    }
-                }
-            });
-        });
+        pool.spawn(move || handle_python_call(rx));
     }
     return Arc::new(worker_txs);
+}
+
+#[inline]
+fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>) {
+    Python::attach(|py| {
+        while let Some(req_worker) = py.detach(|| rx.blocking_recv()) {
+            if let PyRequestWorker::Http(req) = req_worker {
+                match (
+                    Py::new(py, SlimeResponse::new(py)),
+                    Py::new(py, req.request),
+                ) {
+                    (Ok(response_py), Ok(request_py)) => {
+                        let mut is_error: Option<PyErr> = None;
+                        for handler_method in 0..req.handler.len() {
+                            if let Err(err) =
+                                req.handler[handler_method].call1(py, (&request_py, &response_py))
+                            {
+                                let path = request_py.getattr(py, "path").unwrap().to_string();
+                                let method = request_py.getattr(py, "method").unwrap().to_string();
+                                println!(
+                                    "ERROR @ path: [{}] for method [{}]: {}",
+                                    path, method, err
+                                );
+                                is_error = Some(err);
+                                break;
+                            }
+                        }
+                        if is_error.is_some() {
+                            let _ = &req.response.send(Err(is_error.unwrap()));
+                        } else {
+                            let result = response_py.borrow(py).clone_obj(py);
+                            let _ = req.response.send(Ok(result));
+                        }
+                    }
+                    _ => {
+                        let _ = req
+                            .response
+                            .send(Err(pyo3::exceptions::PyException::new_err(
+                                "Cant able to create request and response handler".to_string(),
+                            )));
+                    }
+                }
+            } else if let PyRequestWorker::Stream(req) = req_worker {
+                match (Py::new(py, req.request), Py::new(py, req.response)) {
+                    (Ok(request_py), Ok(response_py)) => {
+                        for handler_method in 0..req.handler.len() {
+                            if let Err(err) =
+                                req.handler[handler_method].call1(py, (&request_py, &response_py))
+                            {
+                                println!("ERROR: {}", err);
+                            }
+                            break;
+                        }
+                    }
+                    _ => {
+                        println!("ERROR: Cant able to create reqeust and response handler");
+                    }
+                }
+            } else {
+                // websocket in future
+            }
+        }
+    });
 }

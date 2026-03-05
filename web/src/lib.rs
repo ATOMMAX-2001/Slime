@@ -24,6 +24,7 @@ mod web {
         secret_key: String,
         is_dev: bool,
     ) -> PyResult<()> {
+        println!("Initializing...");
         let slime_obj_bound = slime_obj.bind(py);
         let slime_routes = slime_obj_bound.call_method0("_get_routes")?;
         let slime_filename = slime_obj_bound.getattr("_Slime__filename")?.to_string();
@@ -40,7 +41,6 @@ mod web {
 
         let runtime_handler = runtime.handle().clone();
         let worker_txs = server::spawn_python_workers(worker_count);
-        // let (async_tx, async_rx) = oneshot::channel::<P>();
         let mut server = SlimeServer::new(
             host,
             port,
