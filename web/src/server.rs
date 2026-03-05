@@ -148,15 +148,20 @@ impl SlimeServer {
             let handler = value.cast::<PyDict>().unwrap();
             let mut handlers: Vec<Py<PyAny>> = Vec::with_capacity(3);
             if let Ok(Some(before_handler)) = handler.get_item("before") {
-                handlers.push(before_handler.unbind());
+                if !before_handler.is_none() {
+                    handlers.push(before_handler.unbind());
+                }
             }
             if let Ok(Some(request_handler)) = handler.get_item("handler") {
-                handlers.push(request_handler.unbind());
+                if !request_handler.is_none() {
+                    handlers.push(request_handler.unbind());
+                }
             }
             if let Ok(Some(after_handler)) = handler.get_item("after") {
-                handlers.push(after_handler.unbind());
+                if !after_handler.is_none() {
+                    handlers.push(after_handler.unbind());
+                }
             }
-
             routes_collection.push(Route::new(path, method, stream, handlers));
         }
         self.routes = routes_collection;
@@ -435,16 +440,15 @@ pub fn spawn_python_workers(worker_count: usize) -> Arc<Vec<mpsc::Sender<PyReque
                             Ok(response_py) => {
                                 let request_obj = Py::new(py, req.request).unwrap();
                                 for handler_method in 0..req.handler.len() {
-                                    match req.handler[handler_method].call1(
-                                        py,
-                                        (request_obj.clone_ref(py), response_py.clone_ref(py)),
-                                    ) {
+                                    match req.handler[handler_method]
+                                        .call1(py, (&request_obj, &response_py))
+                                    {
                                         Ok(_) => {
                                             // let result = response_py.borrow(py).clone_obj(py);
                                             // let _ = req.response.send(Ok(result));
                                         }
                                         Err(err) => {
-                                            println!("{}", err);
+                                            println!("ERROR: {}", err);
                                             // let _ = req.response.send(Err(err));
                                         }
                                     }
@@ -461,7 +465,7 @@ pub fn spawn_python_workers(worker_count: usize) -> Arc<Vec<mpsc::Sender<PyReque
                         let response_obj = Py::new(py, req.response).unwrap();
                         for handler_method in 0..req.handler.len() {
                             let _ = req.handler[handler_method]
-                                .call1(py, (request_obj.clone_ref(py), response_obj.clone_ref(py)));
+                                .call1(py, (&request_obj, &response_obj));
                         }
                     } else {
                         // websocket in future

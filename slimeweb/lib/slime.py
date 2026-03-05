@@ -45,28 +45,6 @@ class Slime:
         # => for each handler there can be only one method
         self.__routes: Dict[Routes, Dict[str, Callable | None]] = {}
 
-    def middle_after(self, path: str = "/", method: str = "GET") -> Callable:
-        def wrapper(middle_handler) -> Callable:
-            if middle_handler is None or not callable(middle_handler):
-                raise ValueError(
-                    f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
-                )
-            found: bool = False
-            for route in self.__routes:
-                if route.path == path and route.method == method:
-                    call_handler = self.__routes.get(route)
-                    if call_handler is not None:
-                        call_handler["after"] = middle_handler
-                        found = True
-                        break
-            if not found:
-                raise ValueError(
-                    "You need to define the request handler to declare middleware"
-                )
-            return middle_handler
-
-        return wrapper
-
     def middle_before(self, path: str = "/", method: str = "GET") -> Callable:
         def wrapper(middle_handler) -> Callable:
             if middle_handler is None or not callable(middle_handler):
@@ -74,17 +52,51 @@ class Slime:
                     f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
                 )
             found: bool = False
-            for route in self.__routes:
-                if route.path == path and route.method == method:
+            if path == "*":
+                for route in self.__routes:
                     call_handler = self.__routes.get(route)
                     if call_handler is not None:
                         call_handler["before"] = middle_handler
-                        found = True
-                        break
-            if not found:
+            else:
+                for route in self.__routes:
+                    if route.path == path and route.method == method:
+                        call_handler = self.__routes.get(route)
+                        if call_handler is not None:
+                            call_handler["before"] = middle_handler
+                            found = True
+                            break
+                if not found:
+                    raise ValueError(
+                        "You need to define the request handler to declare middleware"
+                    )
+            return middle_handler
+
+        return wrapper
+
+    def middle_after(self, path: str = "/", method: str = "GET") -> Callable:
+        def wrapper(middle_handler) -> Callable:
+            if middle_handler is None or not callable(middle_handler):
                 raise ValueError(
-                    "You need to define the request handler to declare middleware"
+                    f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
                 )
+            found: bool = False
+            if path == "*":
+                for route in self.__routes:
+                    call_handler = self.__routes.get(route)
+                    if call_handler is not None:
+                        call_handler["before"] = middle_handler
+            else:
+                for route in self.__routes:
+                    if route.path == path and route.method == method:
+                        call_handler = self.__routes.get(route)
+                        if call_handler is not None:
+                            call_handler["after"] = middle_handler
+                            found = True
+                            break
+                if not found:
+                    raise ValueError(
+                        "You need to define the request handler to declare middleware"
+                    )
             return middle_handler
 
         return wrapper

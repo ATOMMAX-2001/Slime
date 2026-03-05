@@ -3,16 +3,20 @@ from lib import slime
 app = slime.Slime(__file__)
 
 
-@app.middle_before(path="/", method="GET"):
-def land_before(req,resp):
-    print(req)
-
-
-
 @app.route(path="/", method="GET")
 def land(req, resp):
     html = req.render("hello.html", **{"name": "abilash", "age": 24})
     return resp.html(html)
+
+
+@app.middle_after(path="/", method="GET")
+def land_after(req, resp):
+    resp.set_header("SERVERMID1", "SERVERV>!")
+
+
+@app.middle_before(path="/", method="GET")
+def land_before(req, resp):
+    resp.set_header("SERVERMID", "SERVERV>@!")
 
 
 @app.route(path="/stream", method="GET", stream="text/plain")
