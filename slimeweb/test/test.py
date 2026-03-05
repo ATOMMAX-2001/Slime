@@ -3,6 +3,12 @@ from lib import slime
 app = slime.Slime(__file__)
 
 
+@app.middle_before(path="/", method="GET"):
+def land_before(req,resp):
+    print(req)
+
+
+
 @app.route(path="/", method="GET")
 def land(req, resp):
     html = req.render("hello.html", **{"name": "abilash", "age": 24})

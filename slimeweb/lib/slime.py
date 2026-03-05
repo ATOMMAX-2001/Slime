@@ -5,8 +5,6 @@ class Routes:
     def __init__(
         self, path: str = "/", method: str = "GET", stream: str | None = None
     ) -> None:
-        if path is None or method is None:
-            raise ValueError("Path and Method should not be empty")
         if method.upper() not in ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]:
             raise ValueError(f"{method} is not Valid")
 
@@ -38,14 +36,58 @@ class Slime:
         if filename is None or not isinstance(filename, str):
             raise ValueError("Need argument as __file__ ")
 
-        # for templating purpose we can fetch file path with /template
+        # for templating purpose we can fetch file path with /templates and /static
         self.__filename: str | None = filename
 
         # => you can multiple or same path with different request
         # like let saay user can assign  a path /name
         # with methods like GET,POST under /name
         # => for each handler there can be only one method
-        self.__routes: Dict[Routes, Callable] = {}
+        self.__routes: Dict[Routes, Dict[str, Callable | None]] = {}
+
+    def middle_after(self, path: str = "/", method: str = "GET") -> Callable:
+        def wrapper(middle_handler) -> Callable:
+            if middle_handler is None or not callable(middle_handler):
+                raise ValueError(
+                    f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
+                )
+            found: bool = False
+            for route in self.__routes:
+                if route.path == path and route.method == method:
+                    call_handler = self.__routes.get(route)
+                    if call_handler is not None:
+                        call_handler["after"] = middle_handler
+                        found = True
+                        break
+            if not found:
+                raise ValueError(
+                    "You need to define the request handler to declare middleware"
+                )
+            return middle_handler
+
+        return wrapper
+
+    def middle_before(self, path: str = "/", method: str = "GET") -> Callable:
+        def wrapper(middle_handler) -> Callable:
+            if middle_handler is None or not callable(middle_handler):
+                raise ValueError(
+                    f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
+                )
+            found: bool = False
+            for route in self.__routes:
+                if route.path == path and route.method == method:
+                    call_handler = self.__routes.get(route)
+                    if call_handler is not None:
+                        call_handler["before"] = middle_handler
+                        found = True
+                        break
+            if not found:
+                raise ValueError(
+                    "You need to define the request handler to declare middleware"
+                )
+            return middle_handler
+
+        return wrapper
 
     def route(
         self, path: str = "/", method: str = "GET", stream: str | None = None
@@ -56,12 +98,16 @@ class Slime:
                     f"View handler should be a function for [Path: {path}, Method: {method}]"
                 )
 
-            self.__routes[Routes(path, method, stream)] = route_handler
+            self.__routes[Routes(path, method, stream)] = {
+                "handler": route_handler,
+                "before": None,
+                "after": None,
+            }
             return route_handler
 
         return wrapper
 
-    def _get_routes(self) -> Dict[Routes, Callable]:
+    def _get_routes(self) -> Dict[Routes, Dict[str, Callable | None]]:
         return self.__routes
 
     def serve(
