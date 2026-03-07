@@ -259,3 +259,6 @@ impl SlimeResponse {
         return Ok(());
     }
 }
+
+#[pyclass]
+pub struct SlimeWebSocketResponse {}

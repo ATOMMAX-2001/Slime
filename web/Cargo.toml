@@ -9,7 +9,7 @@ name = "web"
 crate-type = ["cdylib"]
 
 [dependencies]
-axum = "0.8.8"
+axum = { version ="0.8.8", features=["ws"] }
 bytes = "1.11.1"
 pyo3 = "0.27.0"
 rayon = "1.11.0"
@@ -30,3 +30,4 @@ tokio-util = "0.7.18"
 uuid = { version="1.21.0",features=["v4"] }
 tokio-stream = "0.1.18"
 mime = "0.3.17"
+dashmap = "6.1.0"

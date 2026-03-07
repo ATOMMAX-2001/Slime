@@ -1,7 +1,10 @@
 use axum::{
     Router,
     body::{Body, to_bytes},
-    extract::ConnectInfo,
+    extract::{
+        ConnectInfo, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     http::Request,
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -9,9 +12,10 @@ use axum::{
 };
 
 use bytes::Bytes;
+use dashmap::DashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use rayon::ThreadPoolBuilder;
+use rayon::{ThreadPoolBuilder, yield_now};
 
 use axum::extract::Path;
 use minijinja::{AutoEscape, Environment, path_loader};
@@ -21,15 +25,19 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use std::{io, net::SocketAddr};
-use tokio::net::TcpListener;
-use tokio::signal;
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    net::TcpListener,
+    signal,
+    sync::{mpsc, oneshot},
+};
 use tokio_stream::wrappers::ReceiverStream;
 use tower_http::services::ServeDir;
+use uuid::Uuid;
 
 use crate::constant::SERVER;
 use crate::request::{SlimeFile, SlimeRequest};
-use crate::response::{SlimeResponse, SlimeStreamResponse};
+use crate::response::{SlimeResponse, SlimeStreamResponse, SlimeWebSocketResponse};
+
 use std::collections::HashMap;
 
 pub struct Route {
@@ -81,6 +89,22 @@ pub struct PyRequest {
     pub handler: Arc<Vec<Py<PyAny>>>,
     pub request: SlimeRequest,
     pub response: oneshot::Sender<PyResult<SlimeResponse>>,
+}
+
+pub struct WebSocketConn {
+    pub id: Uuid,
+    pub sender: mpsc::Sender<Bytes>,
+}
+
+pub struct PyRequestWebSocket {
+    pub handler: Arc<Py<PyAny>>,
+    pub request: SlimeRequest,
+    pub response: SlimeWebSocketResponse,
+}
+
+#[derive(Clone)]
+pub struct WebSocketConnectionBook {
+    connection: Arc<DashMap<Uuid, WebSocketConn>>,
 }
 
 pub struct SlimeServer {
@@ -166,7 +190,7 @@ impl SlimeServer {
         Ok(())
     }
 
-    fn set_server_routes(&self) -> Router {
+    fn set_server_routes(&self) -> Router<WebSocketConnectionBook> {
         let mut server_router = Router::new();
         let static_dir = OsPath::new(&self.filename).parent().unwrap().join("static");
         let static_service = ServeDir::new(static_dir);
@@ -190,6 +214,8 @@ impl SlimeServer {
                 any(
                     move |ConnectInfo(client): ConnectInfo<SocketAddr>,
                           Path(params): Path<HashMap<String, String>>,
+                          State(app_state): State<WebSocketConnectionBook>,
+                          ws: WebSocketUpgrade,
                           request: Request<Body>| {
                         if is_dev {
                             println!(
@@ -419,7 +445,11 @@ impl SlimeServer {
         println!("Slime server is running at {}", address);
         let _ = axum::serve(
             listener,
-            server_router.into_make_service_with_connect_info::<SocketAddr>(),
+            server_router
+                .with_state(WebSocketConnectionBook {
+                    connection: Arc::new(DashMap::with_capacity(5)),
+                })
+                .into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(shutdown_signal())
         .await;
@@ -469,6 +499,7 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>) {
                                 is_error = Some(err);
                                 break;
                             }
+                            yield_now();
                         }
                         if is_error.is_some() {
                             let _ = &req.response.send(Err(is_error.unwrap()));
