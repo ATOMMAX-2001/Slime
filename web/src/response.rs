@@ -15,9 +15,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pythonize::depythonize;
 use sha2::Sha256;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
-use crate::constant::SERVER as CONST_SERVER;
+use crate::{constant::SERVER as CONST_SERVER, server::WebSocketConn};
 
 #[pyclass]
 pub struct SlimeStreamResponse {
@@ -261,4 +261,50 @@ impl SlimeResponse {
 }
 
 #[pyclass]
-pub struct SlimeWebSocketResponse {}
+pub struct SlimeWebSocketResponse {
+    pub conn: WebSocketConn,
+    pub on_message_handler: Option<Py<PyAny>>,
+    pub on_close_handler: Option<Py<PyAny>>,
+}
+impl Clone for SlimeWebSocketResponse {
+    fn clone(&self) -> Self {
+        SlimeWebSocketResponse {
+            conn: self.conn.clone(),
+            on_message_handler: self.on_message_handler,
+            on_close_handler: self.on_close_handler,
+        }
+    }
+}
+impl SlimeWebSocketResponse {
+    pub fn clone_obj(self) -> SlimeWebSocketResponse {
+        SlimeWebSocketResponse {
+            conn: self.conn.clone(),
+            on_message_handler: self.on_message_handler,
+            on_close_handler: self.on_close_handler,
+        }
+    }
+}
+
+impl SlimeWebSocketResponse {
+    fn on_message(&mut self, handler: Py<PyAny>) -> PyResult<()> {
+        self.on_message_handler = Some(handler);
+        return Ok(());
+    }
+    fn on_close(&mut self, handler: Py<PyAny>) -> PyResult<()> {
+        self.on_close_handler = Some(handler);
+        return Ok(());
+    }
+
+    fn send(&self, py: Python, message: Py<PyAny>) -> PyResult<()> {
+        let value: serde_json::Value = depythonize(message.bind(py))?;
+        let json_str = serde_json::to_string(&value).map_err(|err| {
+            return PyErr::new::<pyo3::exceptions::PyException, _>(format!(
+                "Json serialization error: {}",
+                err
+            ));
+        })?;
+        self.conn.sender.blocking_send(json_str.into());
+
+        return Ok(());
+    }
+}

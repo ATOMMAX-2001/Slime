@@ -3,20 +3,33 @@ from lib import slime
 app = slime.Slime(__file__)
 
 
+@app.websocket(path="/chat", method="GET")
+def chatty(req, resp):
+    @resp.on_message()
+    def read_me(msg):
+        print(msg)
+
+    @resp.on_close()
+    def close_me():
+        print("closed")
+
+    resp.send("Hello world")
+
+
 @app.route(path="/", method="GET")
 def land(req, resp):
     html = req.render("hello.html", **{"name": "abilash", "age": 24})
     return resp.html(html)
 
 
-# @app.middle_after(path="/", method="GET")
-# def land_after(req, resp):
-#     resp.set_header("BEFORE", "Request")
+@app.middle_after(path="/", method="GET")
+def land_after(req, resp):
+    resp.set_header("BEFORE", "Request")
 
 
-# @app.middle_before(path="/", method="GET")
-# def land_before(req, resp):
-#     resp.set_header("AFTER", "REQUEST")
+@app.middle_before(path="/", method="GET")
+def land_before(req, resp):
+    resp.set_header("AFTER", "REQUEST")
 
 
 @app.route(path="/stream", method="GET", stream="text/plain")

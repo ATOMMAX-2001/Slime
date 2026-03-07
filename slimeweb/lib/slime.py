@@ -3,7 +3,11 @@ from typing import Callable, Dict
 
 class Routes:
     def __init__(
-        self, path: str = "/", method: str = "GET", stream: str | None = None
+        self,
+        path: str = "/",
+        method: str = "GET",
+        stream: str | None = None,
+        ws: bool = False,
     ) -> None:
         if method.upper() not in ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]:
             raise ValueError(f"{method} is not Valid")
@@ -11,6 +15,7 @@ class Routes:
         self.path: str = path
         self.method: str = method
         self.stream: str | None = stream
+        self.ws: bool = ws
 
     def __hash__(self) -> int:
         return hash((self.path, self.method, self.stream))
@@ -21,6 +26,7 @@ class Routes:
             and self.path == value.path
             and self.method == value.method
             and self.stream == value.stream
+            and self.ws == value.ws
         )
 
     def __str__(self) -> str:
@@ -28,6 +34,7 @@ class Routes:
             Path: {self.path}
             Method: {self.method}
             {f"Stream: {self.stream}" if self.stream is not None else ""}
+            {f"Websocket: {self.ws}" if self.ws is not None else ""}
         """
 
 
@@ -102,20 +109,60 @@ class Slime:
         return wrapper
 
     def route(
-        self, path: str = "/", method: str = "GET", stream: str | None = None
+        self,
+        path: str = "/",
+        method: str = "GET",
+        stream: str | None = None,
+        ws: bool = False,
     ) -> Callable:
         def wrapper(route_handler) -> Callable:
             if route_handler is None or not callable(route_handler):
                 raise ValueError(
-                    f"View handler should be a function for [Path: {path}, Method: {method}]"
+                    f"Route handler should be a function for [Path: {path}, Method: {method}]"
                 )
 
-            self.__routes[Routes(path, method, stream)] = {
+            self.__routes[Routes(path, method, stream, ws)] = {
                 "handler": route_handler,
                 "before": None,
                 "after": None,
             }
             return route_handler
+
+        return wrapper
+
+    def stream(
+        self, path: str = "/", method: str = "GET", content: str = "text/plain"
+    ) -> Callable:
+        def wrapper(stream_handler) -> Callable:
+            if stream_handler is None or not callable(stream_handler):
+                raise ValueError(
+                    f"Stream handler should be a function for [Path: {path}, Method: {method}]"
+                )
+            if not isinstance(content, str):
+                raise ValueError(
+                    f"Stream content type should be of type <String> with MIME for [Path: {path}, Method: {method}]"
+                )
+            self.__routes[Routes(path, method, stream=content)] = {
+                "handler": stream_handler,
+                "before": None,
+                "after": None,
+            }
+            return stream_handler
+
+        return wrapper
+
+    def websocket(self, path: str = "/", method: str = "GET") -> Callable:
+        def wrapper(websocket_handler) -> Callable:
+            if websocket_handler is None or not callable(websocket_handler):
+                raise ValueError(
+                    f"Websocket handler should be a function for [Path: {path}, Method: {method}]"
+                )
+            self.__routes[Routes(path, method, stream=None, ws=True)] = {
+                "handler": websocket_handler,
+                "before": None,
+                "after": None,
+            }
+            return websocket_handler
 
         return wrapper
 

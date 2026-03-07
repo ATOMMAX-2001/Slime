@@ -13,6 +13,7 @@ use axum::{
 
 use bytes::Bytes;
 use dashmap::DashMap;
+use futures_util::StreamExt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rayon::{ThreadPoolBuilder, yield_now};
@@ -27,6 +28,7 @@ use std::sync::{
 use std::{io, net::SocketAddr};
 use tokio::{
     net::TcpListener,
+    runtime::Handle,
     signal,
     sync::{mpsc, oneshot},
 };
@@ -38,12 +40,14 @@ use crate::constant::SERVER;
 use crate::request::{SlimeFile, SlimeRequest};
 use crate::response::{SlimeResponse, SlimeStreamResponse, SlimeWebSocketResponse};
 
+use futures_util::{Sink, SinkExt};
 use std::collections::HashMap;
 
 pub struct Route {
     pub path: String,
     pub method: String,
     pub stream: Option<String>,
+    pub ws: bool,
     pub handler: Arc<Vec<Py<PyAny>>>,
 }
 
@@ -53,6 +57,7 @@ impl Clone for Route {
             path: self.path.clone(),
             method: self.method.clone(),
             stream: self.stream.to_owned(),
+            ws: self.ws,
             handler: self.handler.clone(),
         }
     }
@@ -63,12 +68,14 @@ impl Route {
         path: String,
         method: String,
         stream: Option<String>,
+        ws: bool,
         handler: Vec<Py<PyAny>>,
     ) -> Self {
         Self {
             path,
             method,
             stream,
+            ws,
             handler: Arc::new(handler),
         }
     }
@@ -77,6 +84,7 @@ impl Route {
 pub enum PyRequestWorker {
     Http(PyRequest),
     Stream(PyRequestStream),
+    WebSocket(PyRequestWebSocket),
 }
 
 pub struct PyRequestStream {
@@ -91,20 +99,31 @@ pub struct PyRequest {
     pub response: oneshot::Sender<PyResult<SlimeResponse>>,
 }
 
+#[derive(Clone)]
 pub struct WebSocketConn {
     pub id: Uuid,
     pub sender: mpsc::Sender<Bytes>,
 }
 
 pub struct PyRequestWebSocket {
-    pub handler: Arc<Py<PyAny>>,
+    pub handler: Arc<Vec<Py<PyAny>>>,
     pub request: SlimeRequest,
-    pub response: SlimeWebSocketResponse,
+    pub response: oneshot::Sender<PyResult<SlimeWebSocketResponse>>,
+    pub conn: WebSocketConn,
 }
 
 #[derive(Clone)]
 pub struct WebSocketConnectionBook {
     connection: Arc<DashMap<Uuid, WebSocketConn>>,
+}
+
+impl WebSocketConnectionBook {
+    pub fn add_conn(&self, value: WebSocketConn) {
+        self.connection.insert(value.id, value);
+    }
+    pub fn remoe_conn(&self, id: Uuid) {
+        self.connection.remove(&id);
+    }
 }
 
 pub struct SlimeServer {
@@ -167,6 +186,7 @@ impl SlimeServer {
             let path: String = key.getattr("path")?.extract()?;
             let method: String = key.getattr("method")?.extract()?;
             let stream: Option<String> = key.getattr("stream")?.extract()?;
+            let ws: bool = key.getattr("ws")?.extract()?;
             let handler = value.cast::<PyDict>().unwrap();
             let mut handlers: Vec<Py<PyAny>> = Vec::with_capacity(3);
             if let Ok(Some(before_handler)) = handler.get_item("before") {
@@ -184,7 +204,7 @@ impl SlimeServer {
                     handlers.push(after_handler.unbind());
                 }
             }
-            routes_collection.push(Route::new(path, method, stream, handlers));
+            routes_collection.push(Route::new(path, method, stream, ws, handlers));
         }
         self.routes = routes_collection;
         Ok(())
@@ -209,6 +229,13 @@ impl SlimeServer {
             let is_dev = self.is_dev;
             let filename = self.filename.to_owned();
             let tokio_runtime = self.tokio_handler.clone();
+            let request_type = if route.ws {
+                "ws"
+            } else if stream_content.is_some() {
+                "stream"
+            } else {
+                "http"
+            };
             server_router = server_router.route(
                 &path.to_owned(),
                 any(
@@ -357,62 +384,73 @@ impl SlimeServer {
                             };
 
                             // send request to python workers
-                            if stream_content.is_some() {
-                                let stream_content_type = stream_content.unwrap();
-                                let (stream_tx, stream_rx) =
-                                    mpsc::channel::<Result<Bytes, io::Error>>(100);
-                                let (started_tx, mut started_rx) =
-                                    mpsc::channel::<HashMap<String, String>>(1);
-                                let new_slime_stream_resonse = SlimeStreamResponse::new(
-                                    stream_content_type.to_owned(),
-                                    stream_tx,
-                                    tokio_runtime.clone(),
-                                    started_tx,
-                                );
-                                if let Err(err) = worker_tx
-                                    .send(PyRequestWorker::Stream(PyRequestStream {
-                                        handler,
-                                        request: slime_request,
-                                        response: new_slime_stream_resonse,
-                                    }))
-                                    .await
-                                {
-                                    return (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        format!(
-                                            "Worker cant able to handle the request (reason) => {}",
-                                            err.to_string()
-                                        ),
-                                    )
-                                        .into_response();
-                                }
-                                if let Some(headers) = started_rx.recv().await {
-                                    let mut new_response = Response::builder()
-                                        .header("content-type", stream_content_type)
-                                        .header("Server", SERVER);
-                                    for (key, value) in headers {
-                                        new_response = new_response.header(key, value);
+
+                            match request_type{
+                                "ws" => {
+                                    websocket_handler(ws,app_state,tokio_runtime.clone(),worker_tx.clone(),slime_request,handler).await;
+                                },
+                                "stream" => {
+                                    let stream_content_type = stream_content.unwrap();
+                                    let (stream_tx, stream_rx) =
+                                        mpsc::channel::<Result<Bytes, io::Error>>(100);
+                                    let (started_tx, mut started_rx) =
+                                        mpsc::channel::<HashMap<String, String>>(1);
+                                    let new_slime_stream_resonse = SlimeStreamResponse::new(
+                                        stream_content_type.to_owned(),
+                                        stream_tx,
+                                        tokio_runtime.clone(),
+                                        started_tx,
+                                    );
+                                    if let Err(err) = worker_tx
+                                        .send(PyRequestWorker::Stream(PyRequestStream {
+                                            handler,
+                                            request: slime_request,
+                                            response: new_slime_stream_resonse,
+                                        }))
+                                        .await
+                                    {
+                                        return (
+                                            StatusCode::INTERNAL_SERVER_ERROR,
+                                            format!(
+                                                "Worker cant able to handle the request (reason) => {}",
+                                                err.to_string()
+                                            ),
+                                        )
+                                            .into_response();
                                     }
-                                    let stream = ReceiverStream::new(stream_rx);
-                                    let body = Body::from_stream(stream);
-                                    return new_response.body(body).unwrap();
-                                }
-                            } else {
-                                if let Err(err) = worker_tx
-                                    .send(PyRequestWorker::Http(PyRequest {
-                                        handler,
-                                        request: slime_request,
-                                        response: resp_tx,
-                                    }))
-                                    .await
-                                {
-                                    return (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        format!("Worker down cant able to handle the request (reason) => {}",err.to_string()),
-                                    )
-                                        .into_response();
-                                }
+                                    if let Some(headers) = started_rx.recv().await {
+                                        let mut new_response = Response::builder()
+                                            .header("content-type", stream_content_type)
+                                            .header("Server", SERVER);
+                                        for (key, value) in headers {
+                                            new_response = new_response.header(key, value);
+                                        }
+                                        let stream = ReceiverStream::new(stream_rx);
+                                        let body = Body::from_stream(stream);
+                                        return new_response.body(body).unwrap();
+                                    }
+
+                                },
+                                "http" => {
+                                    if let Err(err) = worker_tx
+                                        .send(PyRequestWorker::Http(PyRequest {
+                                            handler,
+                                            request: slime_request,
+                                            response: resp_tx,
+                                        }))
+                                        .await
+                                    {
+                                        return (
+                                            StatusCode::INTERNAL_SERVER_ERROR,
+                                            format!("Worker down cant able to handle the request (reason) => {}",err.to_string()),
+                                        )
+                                            .into_response();
+                                    }
+                                },
+                                _ => {return (StatusCode::BAD_REQUEST,"Unknown request".to_string()).into_response()}
+
                             }
+
 
                             // to client side response
                             match resp_rx.await {
@@ -459,6 +497,83 @@ impl SlimeServer {
 
 async fn shutdown_signal() {
     signal::ctrl_c().await.expect("Failed to listen for ctrl_c");
+}
+
+async fn websocket_handler(
+    ws: WebSocketUpgrade,
+    state: WebSocketConnectionBook,
+    tok_hand: Handle,
+    worker: mpsc::Sender<PyRequestWorker>,
+    slime_request: SlimeRequest,
+    handler: Arc<Vec<Py<PyAny>>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(async move |socket| {
+        {
+            let id = Uuid::new_v4();
+            let (ws_tx, mut ws_rx) = mpsc::channel::<Bytes>(1024);
+
+            let web_conn = WebSocketConn { id, sender: ws_tx };
+            state.add_conn(web_conn.clone());
+
+            let (mut sender, mut receiver) = socket.split();
+
+            // send message
+            tok_hand.spawn(async move {
+                while let Some(msg) = ws_rx.recv().await {
+                    if let Err(err) = sender.send(Message::Binary(msg)).await {
+                        println!("ERROR: {}", err.to_string());
+                        break;
+                    }
+                }
+            });
+            let (worker_tx, worker_resp) = oneshot::channel::<PyResult<SlimeWebSocketResponse>>();
+            if let Err(err) = worker
+                .send(PyRequestWorker::WebSocket(PyRequestWebSocket {
+                    handler: handler,
+                    request: slime_request,
+                    response: worker_tx,
+                    conn: web_conn,
+                }))
+                .await
+            {
+                println!(
+                    "Worker down cant able to handle the request (reason) => {}",
+                    err.to_string()
+                );
+            }
+
+            if let Ok(Ok(resp)) = worker_resp.await {
+                // recevie message
+                tok_hand.spawn(async move {
+                    while let Some(Ok(msg)) = receiver.next().await {
+                        match msg {
+                            Message::Binary(data) => {
+                                if let Some(handler_func) = &resp.on_message_handler {
+                                    let _ = Python::attach(|py| {
+                                        handler_func.call1(py, (data.to_vec(),))
+                                    });
+                                }
+                            }
+                            Message::Text(data) => {
+                                if let Some(handler_func) = &resp.on_message_handler {
+                                    let _ = Python::attach(|py| {
+                                        handler_func.call1(py, (data.as_str(),))
+                                    });
+                                }
+                            }
+                            Message::Close(_) => {
+                                if let Some(handler_func) = &resp.on_close_handler {
+                                    let _ = Python::attach(|py| handler_func.call0(py));
+                                }
+                                state.remoe_conn(id);
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            }
+        }
+    })
 }
 
 pub fn spawn_python_workers(worker_count: usize) -> Arc<Vec<mpsc::Sender<PyRequestWorker>>> {
@@ -524,16 +639,42 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>) {
                                 req.handler[handler_method].call1(py, (&request_py, &response_py))
                             {
                                 println!("ERROR: {}", err);
+                                break;
                             }
-                            break;
+                            yield_now();
                         }
                     }
                     _ => {
                         println!("ERROR: Cant able to create reqeust and response handler");
                     }
                 }
-            } else {
-                // websocket in future
+            } else if let PyRequestWorker::WebSocket(req) = req_worker {
+                let response_obj = Py::new(
+                    py,
+                    SlimeWebSocketResponse {
+                        conn: req.conn,
+                        on_message_handler: None,
+                        on_close_handler: None,
+                    },
+                );
+                match (Py::new(py, req.request), response_obj) {
+                    (Ok(request_py), Ok(response_py)) => {
+                        for handler_method in 0..req.handler.len() {
+                            if let Err(err) =
+                                req.handler[handler_method].call1(py, (&request_py, &response_py))
+                            {
+                                println!("ERROR: {}", err);
+                                break;
+                            }
+                            yield_now();
+                        }
+                        let result = response_py.borrow(py).clone_obj();
+                        req.response.send(Ok(result));
+                    }
+                    _ => {
+                        println!("ERROR: Cant able to create reqeust and response handler");
+                    }
+                }
             }
         }
     });
