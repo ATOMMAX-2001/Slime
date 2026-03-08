@@ -15,7 +15,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pythonize::depythonize;
 use sha2::Sha256;
-use tokio::sync::{mpsc, oneshot};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::{constant::SERVER as CONST_SERVER, server::WebSocketConn};
 
@@ -263,35 +264,32 @@ impl SlimeResponse {
 #[pyclass]
 pub struct SlimeWebSocketResponse {
     pub conn: WebSocketConn,
-    pub on_message_handler: Option<Py<PyAny>>,
-    pub on_close_handler: Option<Py<PyAny>>,
+    pub on_message_handler: Arc<Option<Py<PyAny>>>,
+    pub on_close_handler: Arc<Option<Py<PyAny>>>,
 }
+
 impl Clone for SlimeWebSocketResponse {
     fn clone(&self) -> Self {
         SlimeWebSocketResponse {
             conn: self.conn.clone(),
-            on_message_handler: self.on_message_handler,
-            on_close_handler: self.on_close_handler,
+            on_message_handler: self.on_message_handler.clone(),
+            on_close_handler: self.on_close_handler.clone(),
         }
     }
 }
+#[pymethods]
 impl SlimeWebSocketResponse {
-    pub fn clone_obj(self) -> SlimeWebSocketResponse {
-        SlimeWebSocketResponse {
-            conn: self.conn.clone(),
-            on_message_handler: self.on_message_handler,
-            on_close_handler: self.on_close_handler,
-        }
+    #[getter]
+    fn id(&self) -> PyResult<String> {
+        return Ok(self.conn.id.to_string());
     }
-}
 
-impl SlimeWebSocketResponse {
     fn on_message(&mut self, handler: Py<PyAny>) -> PyResult<()> {
-        self.on_message_handler = Some(handler);
+        self.on_message_handler = Arc::new(Some(handler));
         return Ok(());
     }
     fn on_close(&mut self, handler: Py<PyAny>) -> PyResult<()> {
-        self.on_close_handler = Some(handler);
+        self.on_close_handler = Arc::new(Some(handler));
         return Ok(());
     }
 
@@ -303,8 +301,12 @@ impl SlimeWebSocketResponse {
                 err
             ));
         })?;
-        self.conn.sender.blocking_send(json_str.into());
+        let _ = self.conn.sender.try_send(json_str.into());
 
         return Ok(());
+    }
+
+    fn is_closed(&self) -> PyResult<bool> {
+        return Ok(self.conn.sender.is_closed());
     }
 }

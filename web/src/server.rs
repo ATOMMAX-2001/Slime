@@ -3,7 +3,7 @@ use axum::{
     body::{Body, to_bytes},
     extract::{
         ConnectInfo, State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocketUpgrade},
     },
     http::Request,
     http::StatusCode,
@@ -40,7 +40,7 @@ use crate::constant::SERVER;
 use crate::request::{SlimeFile, SlimeRequest};
 use crate::response::{SlimeResponse, SlimeStreamResponse, SlimeWebSocketResponse};
 
-use futures_util::{Sink, SinkExt};
+use futures_util::SinkExt;
 use std::collections::HashMap;
 
 pub struct Route {
@@ -387,7 +387,7 @@ impl SlimeServer {
 
                             match request_type{
                                 "ws" => {
-                                    websocket_handler(ws,app_state,tokio_runtime.clone(),worker_tx.clone(),slime_request,handler).await;
+                                    return websocket_handler(ws,app_state,tokio_runtime.clone(),worker_tx.clone(),slime_request,handler).await.into_response();
                                 },
                                 "stream" => {
                                     let stream_content_type = stream_content.unwrap();
@@ -548,21 +548,21 @@ async fn websocket_handler(
                     while let Some(Ok(msg)) = receiver.next().await {
                         match msg {
                             Message::Binary(data) => {
-                                if let Some(handler_func) = &resp.on_message_handler {
+                                if let Some(handler_func) = &(*resp.on_message_handler) {
                                     let _ = Python::attach(|py| {
                                         handler_func.call1(py, (data.to_vec(),))
                                     });
                                 }
                             }
                             Message::Text(data) => {
-                                if let Some(handler_func) = &resp.on_message_handler {
+                                if let Some(handler_func) = &(*resp.on_message_handler) {
                                     let _ = Python::attach(|py| {
                                         handler_func.call1(py, (data.as_str(),))
                                     });
                                 }
                             }
                             Message::Close(_) => {
-                                if let Some(handler_func) = &resp.on_close_handler {
+                                if let Some(handler_func) = &(*resp.on_message_handler) {
                                     let _ = Python::attach(|py| handler_func.call0(py));
                                 }
                                 state.remoe_conn(id);
@@ -653,8 +653,8 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>) {
                     py,
                     SlimeWebSocketResponse {
                         conn: req.conn,
-                        on_message_handler: None,
-                        on_close_handler: None,
+                        on_message_handler: Arc::new(None),
+                        on_close_handler: Arc::new(None),
                     },
                 );
                 match (Py::new(py, req.request), response_obj) {
@@ -668,8 +668,8 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>) {
                             }
                             yield_now();
                         }
-                        let result = response_py.borrow(py).clone_obj();
-                        req.response.send(Ok(result));
+                        let result = response_py.borrow(py).clone();
+                        let _ = req.response.send(Ok(result));
                     }
                     _ => {
                         println!("ERROR: Cant able to create reqeust and response handler");

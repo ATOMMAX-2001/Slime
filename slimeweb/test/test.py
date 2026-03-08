@@ -5,15 +5,17 @@ app = slime.Slime(__file__)
 
 @app.websocket(path="/chat", method="GET")
 def chatty(req, resp):
-    @resp.on_message()
+
     def read_me(msg):
-        print(msg)
+        if not resp.is_closed():
+            resp.send(msg)
 
-    @resp.on_close()
+    resp.on_message(read_me)
+
     def close_me():
-        print("closed")
+        pass
 
-    resp.send("Hello world")
+    resp.on_close(close_me)
 
 
 @app.route(path="/", method="GET")
