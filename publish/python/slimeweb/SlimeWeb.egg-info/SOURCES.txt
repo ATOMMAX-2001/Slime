@@ -1,0 +1,7 @@
+pyproject.toml
+SlimeWeb.egg-info/PKG-INFO
+SlimeWeb.egg-info/SOURCES.txt
+SlimeWeb.egg-info/dependency_links.txt
+SlimeWeb.egg-info/entry_points.txt
+SlimeWeb.egg-info/requires.txt
+SlimeWeb.egg-info/top_level.txt

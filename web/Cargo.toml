@@ -31,3 +31,8 @@ uuid = { version="1.21.0",features=["v4"] }
 tokio-stream = "0.1.18"
 mime = "0.3.17"
 dashmap = "6.1.0"
+mimalloc-rust = "0.2.1"
+
+
+[profile.release]
+lto = true

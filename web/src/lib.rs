@@ -9,6 +9,9 @@ mod server;
 
 use server::SlimeServer;
 mod constant;
+use mimalloc_rust::*;
+#[global_allocator]
+static GLOBAL_MIMALLOC: GlobalMiMalloc = GlobalMiMalloc;
 
 #[pymodule]
 mod web {

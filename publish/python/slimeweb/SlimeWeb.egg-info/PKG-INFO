@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: SlimeWeb
+Version: 0.1.0
+Summary: A Simple fast lightweight webframework lib for python
+Author-email: "S.ABILASH" <abinix01@gmail.com>
+Requires-Python: >=3.14
+Description-Content-Type: text/markdown
+Requires-Dist: uv
