@@ -1,0 +1,18 @@
+[project]
+name = "SlimeWeb"
+version = "0.1.5"
+description = "A Simple fast lightweight webframework lib for python"
+authors = [{ name= "S.ABILASH", email="abinix01@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.12"
+
+[project.scripts]
+slime = "slimeweb.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+[tool.hatch.build]
+packages = ["slimeweb"]

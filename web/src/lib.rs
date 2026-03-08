@@ -18,6 +18,13 @@ mod web {
 
     use super::*;
 
+    ///
+    ///
+    /// Initilize the Slime web server
+    /// ```python
+    /// init_web(host: str="localhost",port: int=3000,secret_key:str,is_dev: bool)
+    /// ```
+
     #[pyfunction]
     pub fn init_web(
         py: Python,

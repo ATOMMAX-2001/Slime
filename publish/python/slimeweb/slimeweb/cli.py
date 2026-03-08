@@ -1,5 +1,7 @@
+# AUTHOR: S.ABILASH
+# Email: abinix01@gmail.com
+
 import os
-import platform
 import shutil
 import subprocess as sp
 import sys
@@ -24,7 +26,7 @@ def create_project(name: str):
     script_path = root / "main.py"
 
     code = """
-import slimeweb as Slime
+from slimeweb import Slime
 
 app = Slime(__file__)
 
@@ -41,16 +43,21 @@ if __name__ == "__main__":
     print("[*] Creating an env")
     if not (root / ".venv").exists():
         os.chdir(root)
-
         sp.run(
             ["uv", "venv", "--python", "python3.14t"],
             check=True,
             stdout=sp.DEVNULL,
             stderr=sp.DEVNULL,
-            shell=True,
         )
+        sp.run(
+            ["uv", "python", "pin", "python3.14t"],
+            check=True,
+            stdout=sp.DEVNULL,
+            stderr=sp.DEVNULL,
+        )
+        sp.run(["uv", "init"])
     print(f"\n\n[*] Project '{name}' created 🎉🎉🎉")
-    print(f"[*] cd {name}")
+    print(f"[*] cd {name} ")
 
     print("[*] slime run main")
 

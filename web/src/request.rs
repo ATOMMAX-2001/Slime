@@ -24,21 +24,25 @@ pub struct SlimeFile {
 }
 #[pymethods]
 impl SlimeFile {
+    /// get filename
     #[getter]
     fn filename(&self) -> PyResult<String> {
         return Ok(self.filename.to_owned());
     }
 
+    /// get content_type
     #[getter]
     fn content_type(&self) -> PyResult<String> {
         return Ok(self.content_type.to_owned());
     }
 
+    /// get file_path
     #[getter]
     fn file_path(&self) -> PyResult<String> {
         return Ok(self.temp_path.to_str().unwrap_or("").to_string());
     }
 
+    ///get extension
     #[getter]
     fn extension(&self) -> PyResult<String> {
         return Ok(self.extension.to_owned());

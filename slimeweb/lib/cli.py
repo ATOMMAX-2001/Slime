@@ -1,0 +1,123 @@
+# AUTHOR: S.ABILASH
+# Email: abinix01@gmail.com
+
+import os
+import shutil
+import subprocess as sp
+import sys
+from pathlib import Path
+
+
+def create_project(name: str):
+    if shutil.which("uv") is None:
+        print("\n[*] uv is not found installing...")
+        command = [sys.executable, "-m", "pip", "install", "uv"]
+        sp.run(command, check=True)
+
+    print(f"\n[*] Creating project {name}")
+    root = Path.cwd() / name
+
+    static_path = root / "static"
+    template_path = root / "templates"
+
+    static_path.mkdir(parents=True, exist_ok=True)
+    template_path.mkdir(parents=True, exist_ok=True)
+
+    script_path = root / "main.py"
+
+    code = """
+from slimeweb import Slime
+
+app = Slime(__file__)
+
+@app.route(path="/", method="GET")
+def home(req, resp):
+    return resp.plain("Hello World from slime")
+
+if __name__ == "__main__":
+    app.serve(dev=True)
+"""
+
+    script_path.write_text(code)
+
+    print("[*] Creating an env")
+    if not (root / ".venv").exists():
+        os.chdir(root)
+        sp.run(
+            ["uv", "venv", "--python", "python3.14t"],
+            check=True,
+            stdout=sp.DEVNULL,
+            stderr=sp.DEVNULL,
+        )
+        sp.run(
+            ["uv", "python", "pin", "python3.14t"],
+            check=True,
+            stdout=sp.DEVNULL,
+            stderr=sp.DEVNULL,
+        )
+        sp.run(["uv", "init"])
+    print(f"\n\n[*] Project '{name}' created 🎉🎉🎉")
+    print(f"[*] cd {name} ")
+
+    print("[*] slime run main")
+
+
+def run_project(script: Path):
+
+    script_path = Path.cwd()
+    if script.suffix == ".py":
+        script_path = script_path.joinpath(Path(script))
+    else:
+        script_path = script_path.joinpath(Path(script).with_suffix(".py"))
+
+    if not script_path.exists():
+        print(f"❌ Script '{script_path}' not found")
+        sys.exit(1)
+
+    sp.run(["uv", "run", "python", "-Xgil=0", script_path])
+
+
+def display_logo():
+    print("   _____ _ _             __          __  _     ")
+    print("  / ____| (_)            \\ \\        / / | |    ")
+    print(" | (___ | |_ _ __ ___   __\\ \\  /\\  / /__| |__  ")
+    print("   ___ \\| | | '_ ` _ \\ / _ \\ \\/  \\/ / _ \\ '_ \\ ")
+    print("  ____) | | | | | | | |  __/\\  /\\  /  __/ |_) |")
+    print(" |_____/|_|_|_| |_| |_|\\___| \\/  \\/ \\___|_.__/ ")
+    print("Version: 0.1.0\t\t\t Author: S.Abilash")
+
+
+def main():
+    display_logo()
+    args = sys.argv[1:]
+
+    if not args:
+        print("Usage:")
+        print("  slime new <project_name>")
+        print("  slime run <script>")
+        sys.exit(1)
+
+    command = args[0]
+
+    if command == "new":
+        if len(args) != 2:
+            print("Usage: slime new <project_name>")
+            sys.exit(1)
+
+        create_project(args[1])
+
+    elif command == "run":
+        if len(args) != 2:
+            print("Usage: slime run <script>")
+            sys.exit(1)
+
+        parent_path = Path(args[0]).parent
+        project_path = parent_path.joinpath(Path(args[1]))
+        run_project(project_path)
+
+    else:
+        print(f"Unknown command: {command}")
+
+
+if __name__ == "__main__":
+    main()
