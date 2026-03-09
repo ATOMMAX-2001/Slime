@@ -56,6 +56,7 @@ if __name__ == "__main__":
             stderr=sp.DEVNULL,
         )
         sp.run(["uv", "init"])
+        sp.run(["uv", "add", "slimeweb"], check=True)
     print(f"\n\n[*] Project '{name}' created 🎉🎉🎉")
     print(f"[*] cd {name} ")
 
