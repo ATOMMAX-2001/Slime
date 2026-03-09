@@ -2,11 +2,10 @@ use axum::{
     Router,
     body::{Body, to_bytes},
     extract::{
-        ConnectInfo, State,
+        ConnectInfo, FromRequest, State,
         ws::{Message, WebSocketUpgrade},
     },
-    http::Request,
-    http::StatusCode,
+    http::{Request, StatusCode},
     response::{IntoResponse, Response},
     routing::any,
 };
@@ -242,7 +241,6 @@ impl SlimeServer {
                     move |ConnectInfo(client): ConnectInfo<SocketAddr>,
                           Path(params): Path<HashMap<String, String>>,
                           State(app_state): State<WebSocketConnectionBook>,
-                          ws: WebSocketUpgrade,
                           request: Request<Body>| {
                         if is_dev {
                             println!(
@@ -263,6 +261,10 @@ impl SlimeServer {
 
                             let (resp_tx, resp_rx) = oneshot::channel();
                             let (parts, raw_body) = request.into_parts();
+                            let mut parts_clone =None;
+                            if request_type =="ws"{
+                                parts_clone=Some(parts.clone());
+                            }
                             let content_type = &parts
                                 .headers
                                 .get("content-type")
@@ -387,7 +389,10 @@ impl SlimeServer {
 
                             match request_type{
                                 "ws" => {
-                                    return websocket_handler(ws,app_state,tokio_runtime.clone(),worker_tx.clone(),slime_request,handler).await.into_response();
+                                    if let Ok(ws) = WebSocketUpgrade::from_request(Request::from_parts(parts_clone.unwrap(), Body::empty()),&app_state).await{
+                                        return websocket_handler(ws,app_state,tokio_runtime.clone(),worker_tx.clone(),slime_request,handler).await.into_response();
+                                    }
+
                                 },
                                 "stream" => {
                                     let stream_content_type = stream_content.unwrap();

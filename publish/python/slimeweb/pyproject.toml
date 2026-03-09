@@ -1,6 +1,6 @@
 [project]
 name = "SlimeWeb"
-version = "0.1.5"
+version = "0.1.8"
 description = "A Simple fast lightweight webframework lib for python"
 authors = [{ name= "S.ABILASH", email="abinix01@gmail.com" }]
 readme = "README.md"
@@ -16,3 +16,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 packages = ["slimeweb"]
+artifacts = [
+  "slimeweb/**/*.so",
+  "slimeweb/**/*.pyd"
+]
