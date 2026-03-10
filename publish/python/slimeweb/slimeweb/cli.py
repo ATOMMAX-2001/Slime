@@ -75,7 +75,8 @@ def run_project(script: Path):
         print(f"❌ Script '{script_path}' not found")
         sys.exit(1)
 
-    sp.run(["uv", "run", "python", "-Xgil=0", script_path])
+    command = ["uv", "run", "python", "-Xgil=0", script_path]
+    sp.run(command)
 
 
 def display_logo():

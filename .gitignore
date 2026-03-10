@@ -3,3 +3,4 @@ web/.*
 web/target/*
 slime.egg-info/
 *.pyc
+publish/*/*/dist/*

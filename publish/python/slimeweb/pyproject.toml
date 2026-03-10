@@ -1,6 +1,6 @@
 [project]
 name = "SlimeWeb"
-version = "0.1.8"
+version = "0.1.1"
 description = "A Simple fast lightweight webframework lib for python"
 authors = [{ name= "S.ABILASH", email="abinix01@gmail.com" }]
 readme = "README.md"

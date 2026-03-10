@@ -1,3 +1,6 @@
+# AUTHOR: S.ABILASH
+# Email: abinix01@gmail.com
+
 import inspect
 from typing import Callable, Dict
 
@@ -187,7 +190,7 @@ class Slime:
 
             secret_key = secrets.token_urlsafe(30)
 
-        import web
+        from . import web
 
         web.init_web(self, host, port, secret_key, dev)
         print("Slime server is shutting down...")
