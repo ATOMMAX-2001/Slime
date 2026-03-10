@@ -4,16 +4,14 @@ Slime is a high-performance web framework that combines Rust and python
 
 It is designed for developers who want Python developer experience with a Rust-powered server core.
 
-Slime supports:
 
-- synchronous Python handlers
-- multipart/form-data (file uploads)
-- JSON and form requests
-- template rendering with context
-- streaming response
-- background-style worker execution
-- multiple Python worker threads
-- websocket
+## Installation
+
+- pip install slimeweb
+- slime new <Project Name>
+- cd <Project Name>
+- slime run <Project Name>
+
 
 
 ---
@@ -22,14 +20,14 @@ Slime supports:
 
 - Python handler functions
 - Multiple worker pool model
-- No asyncio required
+- Synchronous handler
 - Multipart form support
 - File uploads
 - Streaming Response
 - Cookie signing
 - Custom headers
-- JSON / HTML / plain responses and others
-- templates rendering with context
+- JSON / HTML / raw responses
+- Templates rendering with context
 - Hot reload of templates in dev mode
 - WebSocket
 
