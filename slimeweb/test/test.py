@@ -1,3 +1,6 @@
+import asyncio
+import time
+
 from lib import slime
 
 app = slime.Slime(__file__)
@@ -20,6 +23,7 @@ def chatty(req, resp):
 
 @app.route(path="/", method="GET")
 def land(req, resp):
+
     html = req.render("hello.html", **{"name": "abilash", "age": 24})
     return resp.html(html)
 

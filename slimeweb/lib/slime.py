@@ -190,7 +190,7 @@ class Slime:
 
             secret_key = secrets.token_urlsafe(30)
 
-        from . import web
+        import web
 
         web.init_web(self, host, port, secret_key, dev)
         print("Slime server is shutting down...")

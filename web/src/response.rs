@@ -86,8 +86,9 @@ impl SlimeStreamResponse {
 
         return Ok(());
     }
-
-    fn send(&self, py: Python, data: Py<PyAny>) -> PyResult<()> {
+    #[pyo3(signature = (data, strict_order=false))]
+    fn send(&self, py: Python, data: Py<PyAny>, strict_order: Option<bool>) -> PyResult<()> {
+        let maintain_order = strict_order.unwrap_or(false);
         if !self.is_started {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "You need to start the stream before streaming the data",
@@ -101,11 +102,15 @@ impl SlimeStreamResponse {
             ));
         })?;
         let tx = self.sender.clone();
-        self.tokio_handler.spawn(async move {
-            let _ = tx
-                .send(Ok(Bytes::copy_from_slice(json_str.as_bytes())))
-                .await;
-        });
+        if maintain_order {
+            let _ = tx.try_send(Ok(Bytes::copy_from_slice(json_str.as_bytes())));
+        } else {
+            self.tokio_handler.spawn(async move {
+                let _ = tx
+                    .send(Ok(Bytes::copy_from_slice(json_str.as_bytes())))
+                    .await;
+            });
+        }
 
         return Ok(());
     }
