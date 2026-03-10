@@ -1,3 +1,4 @@
+import inspect
 from typing import Callable, Dict
 
 
@@ -58,6 +59,8 @@ class Slime:
                 raise ValueError(
                     f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
                 )
+            if inspect.iscoroutinefunction(middle_handler):
+                raise Exception("Slime currently doesnt support async handler.")
             found: bool = False
             if path == "*":
                 for route in self.__routes:
@@ -86,6 +89,8 @@ class Slime:
                 raise ValueError(
                     f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
                 )
+            if inspect.iscoroutinefunction(middle_handler):
+                raise Exception("Slime currently doesnt support async handler.")
             found: bool = False
             if path == "*":
                 for route in self.__routes:
@@ -120,7 +125,8 @@ class Slime:
                 raise ValueError(
                     f"Route handler should be a function for [Path: {path}, Method: {method}]"
                 )
-
+            if inspect.iscoroutinefunction(route_handler):
+                raise Exception("Slime currently doesnt support async handler.")
             self.__routes[Routes(path, method, stream, ws)] = {
                 "handler": route_handler,
                 "before": None,
