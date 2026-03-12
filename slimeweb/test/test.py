@@ -1,5 +1,4 @@
 import asyncio
-import time
 
 from lib import slime
 
@@ -22,8 +21,8 @@ def chatty(req, resp):
 
 
 @app.route(path="/", method="GET")
-def land(req, resp):
-
+async def land(req, resp):
+    await asyncio.sleep(1)
     html = req.render("hello.html", **{"name": "abilash", "age": 24})
     return resp.html(html)
 

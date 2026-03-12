@@ -119,7 +119,7 @@ impl SlimeStreamResponse {
         return Ok(());
     }
 }
-
+#[derive(Debug)]
 #[pyclass]
 pub struct SlimeResponse {
     pub status: u16,

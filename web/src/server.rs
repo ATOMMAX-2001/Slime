@@ -13,8 +13,8 @@ use axum::{
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::StreamExt;
-use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::{prelude::*, types::PyTuple};
 use rayon::{ThreadPoolBuilder, yield_now};
 
 use axum::extract::Path;
@@ -40,6 +40,7 @@ use crate::request::{SlimeFile, SlimeRequest};
 use crate::response::{SlimeResponse, SlimeStreamResponse, SlimeWebSocketResponse};
 
 use futures_util::SinkExt;
+use pyo3_async_runtimes::{self as py_asyncio, TaskLocals};
 use std::collections::HashMap;
 
 pub struct Route {
@@ -47,7 +48,7 @@ pub struct Route {
     pub method: String,
     pub stream: Option<String>,
     pub ws: bool,
-    pub handler: Arc<Vec<Py<PyAny>>>,
+    pub handler: Arc<Vec<(Py<PyAny>, bool)>>,
 }
 
 impl Clone for Route {
@@ -68,7 +69,7 @@ impl Route {
         method: String,
         stream: Option<String>,
         ws: bool,
-        handler: Vec<Py<PyAny>>,
+        handler: Vec<(Py<PyAny>, bool)>,
     ) -> Self {
         Self {
             path,
@@ -87,13 +88,13 @@ pub enum PyRequestWorker {
 }
 
 pub struct PyRequestStream {
-    pub handler: Arc<Vec<Py<PyAny>>>,
+    pub handler: Arc<Vec<(Py<PyAny>, bool)>>,
     pub request: SlimeRequest,
     pub response: SlimeStreamResponse,
 }
 
 pub struct PyRequest {
-    pub handler: Arc<Vec<Py<PyAny>>>,
+    pub handler: Arc<Vec<(Py<PyAny>, bool)>>,
     pub request: SlimeRequest,
     pub response: oneshot::Sender<PyResult<SlimeResponse>>,
 }
@@ -105,7 +106,7 @@ pub struct WebSocketConn {
 }
 
 pub struct PyRequestWebSocket {
-    pub handler: Arc<Vec<Py<PyAny>>>,
+    pub handler: Arc<Vec<(Py<PyAny>, bool)>>,
     pub request: SlimeRequest,
     pub response: oneshot::Sender<PyResult<SlimeWebSocketResponse>>,
     pub conn: WebSocketConn,
@@ -187,20 +188,47 @@ impl SlimeServer {
             let stream: Option<String> = key.getattr("stream")?.extract()?;
             let ws: bool = key.getattr("ws")?.extract()?;
             let handler = value.cast::<PyDict>().unwrap();
-            let mut handlers: Vec<Py<PyAny>> = Vec::with_capacity(3);
+            let mut handlers: Vec<(Py<PyAny>, bool)> = Vec::with_capacity(3);
             if let Ok(Some(before_handler)) = handler.get_item("before") {
                 if !before_handler.is_none() {
-                    handlers.push(before_handler.unbind());
+                    let handler_object = before_handler.cast::<PyTuple>()?;
+
+                    handlers.push((
+                        handler_object.get_item(0).unwrap().unbind(),
+                        handler_object
+                            .get_item(1)
+                            .unwrap()
+                            .extract::<bool>()
+                            .unwrap_or(false),
+                    ));
                 }
             }
             if let Ok(Some(request_handler)) = handler.get_item("handler") {
                 if !request_handler.is_none() {
-                    handlers.push(request_handler.unbind());
+                    let handler_object = request_handler.cast::<PyTuple>()?;
+
+                    handlers.push((
+                        handler_object.get_item(0).unwrap().unbind(),
+                        handler_object
+                            .get_item(1)
+                            .unwrap()
+                            .extract::<bool>()
+                            .unwrap_or(false),
+                    ));
                 }
             }
             if let Ok(Some(after_handler)) = handler.get_item("after") {
                 if !after_handler.is_none() {
-                    handlers.push(after_handler.unbind());
+                    let handler_object = after_handler.cast::<PyTuple>()?;
+
+                    handlers.push((
+                        handler_object.get_item(0).unwrap().unbind(),
+                        handler_object
+                            .get_item(1)
+                            .unwrap()
+                            .extract::<bool>()
+                            .unwrap_or(false),
+                    ));
                 }
             }
             routes_collection.push(Route::new(path, method, stream, ws, handlers));
@@ -510,7 +538,7 @@ async fn websocket_handler(
     tok_hand: Handle,
     worker: mpsc::Sender<PyRequestWorker>,
     slime_request: SlimeRequest,
-    handler: Arc<Vec<Py<PyAny>>>,
+    handler: Arc<Vec<(Py<PyAny>, bool)>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(async move |socket| {
         {
@@ -581,23 +609,49 @@ async fn websocket_handler(
     })
 }
 
-pub fn spawn_python_workers(worker_count: usize) -> Arc<Vec<mpsc::Sender<PyRequestWorker>>> {
+pub fn spawn_python_workers(
+    worker_count: usize,
+    runtime_handler: Handle,
+) -> Arc<Vec<mpsc::Sender<PyRequestWorker>>> {
     let mut worker_txs = Vec::with_capacity(worker_count);
     let pool = ThreadPoolBuilder::new()
         .num_threads(worker_count)
         .build()
         .unwrap();
+
     for _ in 0..worker_count {
+        let runtime_handler_clone = runtime_handler.clone();
         let (tx, rx) = mpsc::channel::<PyRequestWorker>(1024 * 1024 * 10);
         worker_txs.push(tx.clone());
-        pool.spawn(move || handle_python_call(rx));
+        pool.spawn(move || handle_python_call(rx, runtime_handler_clone.clone()));
     }
     return Arc::new(worker_txs);
 }
 
 #[inline]
-fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>) {
+fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, runtime_handler: Handle) {
     Python::attach(|py| {
+        let asyncio_mod = py.import("asyncio").expect("Need asyncio lib ");
+        let python_event_loop = match asyncio_mod.call_method0("get_running_loop") {
+            Ok(event_loop) => event_loop,
+            Err(_) => {
+                let new_event = asyncio_mod
+                    .call_method0("new_event_loop")
+                    .expect("Cant able to create event loop");
+                asyncio_mod
+                    .call_method1("set_event_loop", (new_event.clone(),))
+                    .expect("Cant able to init the event loop");
+                new_event
+            }
+        };
+        let local_event: TaskLocals = TaskLocals::new(python_event_loop.clone());
+        let unbind_event_loop = python_event_loop.unbind();
+        std::thread::spawn(move || {
+            Python::attach(|py| {
+                unbind_event_loop.call_method0(py, "run_forever").unwrap();
+            });
+        });
+
         while let Some(req_worker) = py.detach(|| rx.blocking_recv()) {
             if let PyRequestWorker::Http(req) = req_worker {
                 match (
@@ -607,17 +661,36 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>) {
                     (Ok(response_py), Ok(request_py)) => {
                         let mut is_error: Option<PyErr> = None;
                         for handler_method in 0..req.handler.len() {
-                            if let Err(err) =
-                                req.handler[handler_method].call1(py, (&request_py, &response_py))
+                            match req.handler[handler_method]
+                                .0
+                                .call1(py, (&request_py, &response_py))
                             {
-                                let path = request_py.getattr(py, "path").unwrap().to_string();
-                                let method = request_py.getattr(py, "method").unwrap().to_string();
-                                println!(
-                                    "ERROR @ path: [{}] for method [{}]: {}",
-                                    path, method, err
-                                );
-                                is_error = Some(err);
-                                break;
+                                Ok(might_co) => {
+                                    if req.handler[handler_method].1 {
+                                        let future = py_asyncio::into_future_with_locals(
+                                            &local_event,
+                                            might_co.into_bound(py),
+                                        )
+                                        .unwrap();
+
+                                        runtime_handler.spawn(async move {
+                                            let _ = future.await;
+                                        });
+                                        std::thread::sleep(std::time::Duration::from_secs(2));
+                                        continue;
+                                    }
+                                }
+                                Err(err) => {
+                                    let path = request_py.getattr(py, "path").unwrap().to_string();
+                                    let method =
+                                        request_py.getattr(py, "method").unwrap().to_string();
+                                    println!(
+                                        "ERROR @ path: [{}] for method [{}]: {}",
+                                        path, method, err
+                                    );
+                                    is_error = Some(err);
+                                    break;
+                                }
                             }
                             yield_now();
                         }
@@ -625,7 +698,7 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>) {
                             let _ = &req.response.send(Err(is_error.unwrap()));
                         } else {
                             let result = response_py.borrow(py).clone_obj(py);
-                            let _ = req.response.send(Ok(result));
+                            let out = req.response.send(Ok(result));
                         }
                     }
                     _ => {
@@ -640,8 +713,9 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>) {
                 match (Py::new(py, req.request), Py::new(py, req.response)) {
                     (Ok(request_py), Ok(response_py)) => {
                         for handler_method in 0..req.handler.len() {
-                            if let Err(err) =
-                                req.handler[handler_method].call1(py, (&request_py, &response_py))
+                            if let Err(err) = req.handler[handler_method]
+                                .0
+                                .call1(py, (&request_py, &response_py))
                             {
                                 println!("ERROR: {}", err);
                                 break;
@@ -665,8 +739,9 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>) {
                 match (Py::new(py, req.request), response_obj) {
                     (Ok(request_py), Ok(response_py)) => {
                         for handler_method in 0..req.handler.len() {
-                            if let Err(err) =
-                                req.handler[handler_method].call1(py, (&request_py, &response_py))
+                            if let Err(err) = req.handler[handler_method]
+                                .0
+                                .call1(py, (&request_py, &response_py))
                             {
                                 println!("ERROR: {}", err);
                                 break;
