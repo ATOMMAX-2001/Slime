@@ -628,6 +628,170 @@ pub fn spawn_python_workers(
     return Arc::new(worker_txs);
 }
 
+async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: TaskLocals) {
+    match req_worker {
+        PyRequestWorker::Http(req) => {
+            match Python::attach(|py| {
+                return (
+                    Py::new(py, SlimeResponse::new(py)),
+                    Py::new(py, req.request),
+                );
+            }) {
+                (Ok(response_py), Ok(request_py)) => {
+                    let mut is_error: Option<PyErr> = None;
+                    let co_collections = Python::attach(|py| {
+                        let mut co_collections = Vec::with_capacity(req.handler.len());
+                        for handler_method in 0..req.handler.len() {
+                            co_collections.push(
+                                req.handler[handler_method]
+                                    .0
+                                    .call1(py, (&request_py, &response_py)),
+                            );
+                        }
+                        return co_collections;
+                    });
+                    for co in co_collections {
+                        match co {
+                            Ok(co_handler) => {
+                                let future = Python::attach(|py| {
+                                    py_asyncio::into_future_with_locals(
+                                        &local_event,
+                                        co_handler.into_bound(py),
+                                    )
+                                    .unwrap()
+                                });
+                                if let Err(err) = future.await {
+                                    is_error = Some(err);
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                is_error = Some(err);
+                            }
+                        }
+                    }
+
+                    if is_error.is_some() {
+                        let _ = &req.response.send(Err(is_error.unwrap()));
+                    } else {
+                        let result = Python::attach(|py| response_py.borrow(py).clone_obj(py));
+                        let _ = req.response.send(Ok(result));
+                    }
+                }
+                _ => {
+                    let _ = req
+                        .response
+                        .send(Err(pyo3::exceptions::PyException::new_err(
+                            "Cant able to create request and response handler".to_string(),
+                        )));
+                }
+            }
+        }
+        PyRequestWorker::Stream(req) => {
+            match Python::attach(|py| (Py::new(py, req.request), Py::new(py, req.response))) {
+                (Ok(request_py), Ok(response_py)) => {
+                    let mut is_error: Option<PyErr> = None;
+                    let co_collections = Python::attach(|py| {
+                        let mut co_collections = Vec::with_capacity(req.handler.len());
+                        for handler_method in 0..req.handler.len() {
+                            co_collections.push(
+                                req.handler[handler_method]
+                                    .0
+                                    .call1(py, (&request_py, &response_py)),
+                            );
+                        }
+                        return co_collections;
+                    });
+                    for co in co_collections {
+                        match co {
+                            Ok(co_handler) => {
+                                let future = Python::attach(|py| {
+                                    py_asyncio::into_future_with_locals(
+                                        &local_event,
+                                        co_handler.into_bound(py),
+                                    )
+                                    .unwrap()
+                                });
+                                if let Err(err) = future.await {
+                                    is_error = Some(err);
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                is_error = Some(err);
+                            }
+                        }
+                    }
+                    if is_error.is_some() {
+                        println!("ERROR: {}", is_error.unwrap());
+                    }
+                }
+                _ => {
+                    println!("ERROR: Cant able to create reqeust and response handler");
+                }
+            }
+        }
+        PyRequestWorker::WebSocket(req) => {
+            match Python::attach(|py| {
+                (
+                    Py::new(py, req.request),
+                    Py::new(
+                        py,
+                        SlimeWebSocketResponse {
+                            conn: req.conn,
+                            on_message_handler: Arc::new(None),
+                            on_close_handler: Arc::new(None),
+                        },
+                    ),
+                )
+            }) {
+                (Ok(request_py), Ok(response_py)) => {
+                    let mut is_error: Option<PyErr> = None;
+                    let co_collections = Python::attach(|py| {
+                        let mut co_collections = Vec::with_capacity(req.handler.len());
+                        for handler_method in 0..req.handler.len() {
+                            co_collections.push(
+                                req.handler[handler_method]
+                                    .0
+                                    .call1(py, (&request_py, &response_py)),
+                            );
+                        }
+                        return co_collections;
+                    });
+                    for co in co_collections {
+                        match co {
+                            Ok(co_handler) => {
+                                let future = Python::attach(|py| {
+                                    py_asyncio::into_future_with_locals(
+                                        &local_event,
+                                        co_handler.into_bound(py),
+                                    )
+                                    .unwrap()
+                                });
+                                if let Err(err) = future.await {
+                                    is_error = Some(err);
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                is_error = Some(err);
+                            }
+                        }
+                    }
+                    if is_error.is_some() {
+                        println!("ERROR: {}", is_error.unwrap());
+                    }
+                    let result = Python::attach(|py| response_py.borrow(py).clone());
+                    let _ = req.response.send(Ok(result));
+                }
+                _ => {
+                    println!("ERROR: Cant able to create reqeust and response handler");
+                }
+            }
+        }
+    }
+}
+
 #[inline]
 fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, runtime_handler: Handle) {
     Python::attach(|py| {
@@ -653,34 +817,19 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, runtime_handler: 
         });
 
         while let Some(req_worker) = py.detach(|| rx.blocking_recv()) {
-            if let PyRequestWorker::Http(req) = req_worker {
-                match (
-                    Py::new(py, SlimeResponse::new(py)),
-                    Py::new(py, req.request),
-                ) {
-                    (Ok(response_py), Ok(request_py)) => {
-                        let mut is_error: Option<PyErr> = None;
-                        for handler_method in 0..req.handler.len() {
-                            match req.handler[handler_method]
-                                .0
-                                .call1(py, (&request_py, &response_py))
-                            {
-                                Ok(might_co) => {
-                                    if req.handler[handler_method].1 {
-                                        let future = py_asyncio::into_future_with_locals(
-                                            &local_event,
-                                            might_co.into_bound(py),
-                                        )
-                                        .unwrap();
-
-                                        runtime_handler.spawn(async move {
-                                            let _ = future.await;
-                                        });
-                                        std::thread::sleep(std::time::Duration::from_secs(2));
-                                        continue;
-                                    }
-                                }
-                                Err(err) => {
+            match req_worker {
+                PyRequestWorker::Http(req) => {
+                    match (
+                        Py::new(py, SlimeResponse::new(py)),
+                        Py::new(py, req.request),
+                    ) {
+                        (Ok(response_py), Ok(request_py)) => {
+                            let mut is_error: Option<PyErr> = None;
+                            for handler_method in 0..req.handler.len() {
+                                if let Err(err) = req.handler[handler_method]
+                                    .0
+                                    .call1(py, (&request_py, &response_py))
+                                {
                                     let path = request_py.getattr(py, "path").unwrap().to_string();
                                     let method =
                                         request_py.getattr(py, "method").unwrap().to_string();
@@ -691,68 +840,70 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, runtime_handler: 
                                     is_error = Some(err);
                                     break;
                                 }
+                                yield_now();
                             }
-                            yield_now();
+                            if is_error.is_some() {
+                                let _ = &req.response.send(Err(is_error.unwrap()));
+                            } else {
+                                let result = response_py.borrow(py).clone_obj(py);
+                                let _ = req.response.send(Ok(result));
+                            }
                         }
-                        if is_error.is_some() {
-                            let _ = &req.response.send(Err(is_error.unwrap()));
-                        } else {
-                            let result = response_py.borrow(py).clone_obj(py);
-                            let out = req.response.send(Ok(result));
+                        _ => {
+                            let _ = req
+                                .response
+                                .send(Err(pyo3::exceptions::PyException::new_err(
+                                    "Cant able to create request and response handler".to_string(),
+                                )));
                         }
-                    }
-                    _ => {
-                        let _ = req
-                            .response
-                            .send(Err(pyo3::exceptions::PyException::new_err(
-                                "Cant able to create request and response handler".to_string(),
-                            )));
                     }
                 }
-            } else if let PyRequestWorker::Stream(req) = req_worker {
-                match (Py::new(py, req.request), Py::new(py, req.response)) {
-                    (Ok(request_py), Ok(response_py)) => {
-                        for handler_method in 0..req.handler.len() {
-                            if let Err(err) = req.handler[handler_method]
-                                .0
-                                .call1(py, (&request_py, &response_py))
-                            {
-                                println!("ERROR: {}", err);
-                                break;
+                PyRequestWorker::Stream(req) => {
+                    match (Py::new(py, req.request), Py::new(py, req.response)) {
+                        (Ok(request_py), Ok(response_py)) => {
+                            for handler_method in 0..req.handler.len() {
+                                if let Err(err) = req.handler[handler_method]
+                                    .0
+                                    .call1(py, (&request_py, &response_py))
+                                {
+                                    println!("ERROR: {}", err);
+                                    break;
+                                }
+                                yield_now();
                             }
-                            yield_now();
                         }
-                    }
-                    _ => {
-                        println!("ERROR: Cant able to create reqeust and response handler");
+                        _ => {
+                            println!("ERROR: Cant able to create reqeust and response handler");
+                        }
                     }
                 }
-            } else if let PyRequestWorker::WebSocket(req) = req_worker {
-                let response_obj = Py::new(
-                    py,
-                    SlimeWebSocketResponse {
-                        conn: req.conn,
-                        on_message_handler: Arc::new(None),
-                        on_close_handler: Arc::new(None),
-                    },
-                );
-                match (Py::new(py, req.request), response_obj) {
-                    (Ok(request_py), Ok(response_py)) => {
-                        for handler_method in 0..req.handler.len() {
-                            if let Err(err) = req.handler[handler_method]
-                                .0
-                                .call1(py, (&request_py, &response_py))
-                            {
-                                println!("ERROR: {}", err);
-                                break;
+                PyRequestWorker::WebSocket(req) => {
+                    let response_obj = Py::new(
+                        py,
+                        SlimeWebSocketResponse {
+                            conn: req.conn,
+                            on_message_handler: Arc::new(None),
+                            on_close_handler: Arc::new(None),
+                        },
+                    );
+                    match (Py::new(py, req.request), response_obj) {
+                        (Ok(request_py), Ok(response_py)) => {
+                            for handler_method in 0..req.handler.len() {
+                                if let Err(err) = req.handler[handler_method]
+                                    .0
+                                    .call1(py, (&request_py, &response_py))
+                                {
+                                    println!("ERROR: {}", err);
+                                    break;
+                                }
+                                yield_now();
                             }
-                            yield_now();
+                            let result = response_py.borrow(py).clone();
+                            let _ = req.response.send(Ok(result));
                         }
-                        let result = response_py.borrow(py).clone();
-                        let _ = req.response.send(Ok(result));
-                    }
-                    _ => {
-                        println!("ERROR: Cant able to create reqeust and response handler");
+                        _ => {
+                            println!("ERROR: Cant able to create reqeust and response handler");
+                        }
                     }
                 }
             }
