@@ -73,4 +73,4 @@ def hello(req, resp):
 
 
 if __name__ == "__main__":
-    app.serve()
+    app.serve(dev=True)

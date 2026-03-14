@@ -137,6 +137,7 @@ pub struct SlimeServer {
     secret_key: Arc<Vec<u8>>,
     template: Arc<Environment<'static>>,
     tokio_handler: tokio::runtime::Handle,
+    event_loop_task: TaskLocals,
 }
 
 impl SlimeServer {
@@ -150,6 +151,29 @@ impl SlimeServer {
         tokio_runtime_handler: tokio::runtime::Handle,
     ) -> SlimeServer {
         let env = SlimeServer::get_template_environment(&filename);
+        let local_event_loop = Python::attach(|py| {
+            let asyncio_mod = py.import("asyncio").expect("Need asyncio lib ");
+            let python_event_loop = match asyncio_mod.call_method0("get_running_loop") {
+                Ok(event_loop) => event_loop,
+                Err(_) => {
+                    let new_event = asyncio_mod
+                        .call_method0("new_event_loop")
+                        .expect("Cant able to create event loop");
+                    asyncio_mod
+                        .call_method1("set_event_loop", (new_event.clone(),))
+                        .expect("Cant able to init the event loop");
+                    new_event
+                }
+            };
+            let local_event: TaskLocals = TaskLocals::new(python_event_loop.clone());
+            let unbind_event_loop = python_event_loop.unbind();
+            std::thread::spawn(move || {
+                Python::attach(|py| {
+                    unbind_event_loop.call_method0(py, "run_forever").unwrap();
+                });
+            });
+            return local_event;
+        });
         SlimeServer {
             filename: filename,
             is_dev: is_dev,
@@ -161,6 +185,7 @@ impl SlimeServer {
             secret_key: Arc::new(secret_key.as_bytes().to_vec()),
             template: Arc::new(env),
             tokio_handler: tokio_runtime_handler,
+            event_loop_task: local_event_loop,
         }
     }
     fn get_template_environment(filename: &String) -> Environment<'static> {
@@ -256,6 +281,8 @@ impl SlimeServer {
             let is_dev = self.is_dev;
             let filename = self.filename.to_owned();
             let tokio_runtime = self.tokio_handler.clone();
+            let is_async_handler = true;
+            let event_loop_task_local = self.event_loop_task.clone();
             let request_type = if route.ws {
                 "ws"
             } else if stream_content.is_some() {
@@ -465,20 +492,29 @@ impl SlimeServer {
 
                                 },
                                 "http" => {
-                                    if let Err(err) = worker_tx
-                                        .send(PyRequestWorker::Http(PyRequest {
+                                    if handler[0].1{
+                                        tokio_runtime.spawn(handle_async_python_call(PyRequestWorker::Http(PyRequest {
                                             handler,
                                             request: slime_request,
                                             response: resp_tx,
-                                        }))
-                                        .await
-                                    {
-                                        return (
-                                            StatusCode::INTERNAL_SERVER_ERROR,
-                                            format!("Worker down cant able to handle the request (reason) => {}",err.to_string()),
-                                        )
-                                            .into_response();
+                                        }), event_loop_task_local));
+                                    }else{
+                                        if let Err(err) = worker_tx
+                                            .send(PyRequestWorker::Http(PyRequest {
+                                                handler,
+                                                request: slime_request,
+                                                response: resp_tx,
+                                            }))
+                                            .await
+                                        {
+                                            return (
+                                                StatusCode::INTERNAL_SERVER_ERROR,
+                                                format!("Worker down cant able to handle the request (reason) => {}",err.to_string()),
+                                            )
+                                                .into_response();
+                                        }
                                     }
+
                                 },
                                 _ => {return (StatusCode::BAD_REQUEST,"Unknown request".to_string()).into_response()}
 
@@ -650,6 +686,7 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
                         }
                         return co_collections;
                     });
+                    dbg!(&co_collections);
                     for co in co_collections {
                         match co {
                             Ok(co_handler) => {
@@ -667,11 +704,13 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
                             }
                             Err(err) => {
                                 is_error = Some(err);
+                                break;
                             }
                         }
                     }
 
                     if is_error.is_some() {
+                        println!("{}", is_error.as_ref().unwrap());
                         let _ = &req.response.send(Err(is_error.unwrap()));
                     } else {
                         let result = Python::attach(|py| response_py.borrow(py).clone_obj(py));
@@ -793,29 +832,8 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
 }
 
 #[inline]
-fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, runtime_handler: Handle) {
+fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler: Handle) {
     Python::attach(|py| {
-        let asyncio_mod = py.import("asyncio").expect("Need asyncio lib ");
-        let python_event_loop = match asyncio_mod.call_method0("get_running_loop") {
-            Ok(event_loop) => event_loop,
-            Err(_) => {
-                let new_event = asyncio_mod
-                    .call_method0("new_event_loop")
-                    .expect("Cant able to create event loop");
-                asyncio_mod
-                    .call_method1("set_event_loop", (new_event.clone(),))
-                    .expect("Cant able to init the event loop");
-                new_event
-            }
-        };
-        let local_event: TaskLocals = TaskLocals::new(python_event_loop.clone());
-        let unbind_event_loop = python_event_loop.unbind();
-        std::thread::spawn(move || {
-            Python::attach(|py| {
-                unbind_event_loop.call_method0(py, "run_forever").unwrap();
-            });
-        });
-
         while let Some(req_worker) = py.detach(|| rx.blocking_recv()) {
             match req_worker {
                 PyRequestWorker::Http(req) => {
