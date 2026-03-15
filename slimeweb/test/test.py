@@ -6,7 +6,8 @@ app = slime.Slime(__file__)
 
 
 @app.websocket(path="/chat", method="GET")
-def chatty(req, resp):
+async def chatty(req, resp):
+    await asyncio.sleep(1)
 
     def read_me(msg):
         if not resp.is_closed():
@@ -74,4 +75,4 @@ def hello(req, resp):
 
 
 if __name__ == "__main__":
-    app.serve(dev=True)
+    app.serve()

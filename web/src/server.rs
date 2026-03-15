@@ -444,7 +444,7 @@ impl SlimeServer {
                             match request_type{
                                 "ws" => {
                                     if let Ok(ws) = WebSocketUpgrade::from_request(Request::from_parts(parts_clone.unwrap(), Body::empty()),&app_state).await{
-                                        return websocket_handler(ws,app_state,tokio_runtime.clone(),worker_tx.clone(),slime_request,handler).await.into_response();
+                                        return websocket_handler(ws,app_state,tokio_runtime.clone(),worker_tx.clone(),slime_request,handler,event_loop_task_local).await.into_response();
                                     }
 
                                 },
@@ -503,11 +503,11 @@ impl SlimeServer {
                                 },
                                 "http" => {
                                     if handler[0].1{
-                                        tokio_runtime.spawn(handle_async_python_call(PyRequestWorker::Http(PyRequest {
+                                        handle_async_python_call(PyRequestWorker::Http(PyRequest {
                                             handler,
                                             request: slime_request,
                                             response: resp_tx,
-                                        }), event_loop_task_local));
+                                        }), event_loop_task_local).await;
                                     }else{
                                         if let Err(err) = worker_tx
                                             .send(PyRequestWorker::Http(PyRequest {
@@ -585,6 +585,7 @@ async fn websocket_handler(
     worker: mpsc::Sender<PyRequestWorker>,
     slime_request: SlimeRequest,
     handler: Arc<Vec<(Py<PyAny>, bool)>>,
+    local_event: TaskLocals,
 ) -> impl IntoResponse {
     ws.on_upgrade(async move |socket| {
         {
@@ -606,19 +607,32 @@ async fn websocket_handler(
                 }
             });
             let (worker_tx, worker_resp) = oneshot::channel::<PyResult<SlimeWebSocketResponse>>();
-            if let Err(err) = worker
-                .send(PyRequestWorker::WebSocket(PyRequestWebSocket {
-                    handler: handler,
-                    request: slime_request,
-                    response: worker_tx,
-                    conn: web_conn,
-                }))
-                .await
-            {
-                println!(
-                    "Worker down cant able to handle the request (reason) => {}",
-                    err.to_string()
-                );
+            if handler[0].1 {
+                handle_async_python_call(
+                    PyRequestWorker::WebSocket(PyRequestWebSocket {
+                        handler: handler,
+                        request: slime_request,
+                        response: worker_tx,
+                        conn: web_conn,
+                    }),
+                    local_event,
+                )
+                .await;
+            } else {
+                if let Err(err) = worker
+                    .send(PyRequestWorker::WebSocket(PyRequestWebSocket {
+                        handler: handler,
+                        request: slime_request,
+                        response: worker_tx,
+                        conn: web_conn,
+                    }))
+                    .await
+                {
+                    println!(
+                        "Worker down cant able to handle the request (reason) => {}",
+                        err.to_string()
+                    );
+                }
             }
 
             if let Ok(Ok(resp)) = worker_resp.await {
@@ -736,7 +750,6 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
             }
         }
         PyRequestWorker::Stream(req) => {
-            println!("here");
             match Python::attach(|py| (Py::new(py, req.request), Py::new(py, req.response))) {
                 (Ok(request_py), Ok(response_py)) => {
                     let mut is_error: Option<PyErr> = None;
