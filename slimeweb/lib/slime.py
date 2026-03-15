@@ -53,7 +53,7 @@ class Slime:
         # for templating purpose we can fetch file path with /templates and /static
         self.__filename: str | None = filename
 
-        # => you can multiple or same path with different request
+        # => you can define multiple or same path with different request
         # like let saay user can assign  a path /name
         # with methods like GET,POST under /name
         # => for each handler there can be only one method

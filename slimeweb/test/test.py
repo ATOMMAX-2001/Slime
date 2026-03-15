@@ -27,18 +27,18 @@ async def land(req, resp):
     return resp.html(html)
 
 
-@app.middle_after(path="/", method="GET")
-async def land_after(req, resp):
-    resp.set_header("BEFORE", "Request")
+# @app.middle_after(path="/", method="GET")
+# async def land_after(req, resp):
+#     resp.set_header("BEFORE", "Request")
 
 
-@app.middle_before(path="/", method="GET")
-async def land_before(req, resp):
-    resp.set_header("AFTER", "REQUEST")
+# @app.middle_before(path="/", method="GET")
+# async def land_before(req, resp):
+#     resp.set_header("AFTER", "REQUEST")
 
 
 @app.route(path="/stream", method="GET", stream="text/plain")
-def stream_me(req, resp):
+async def stream_me(req, resp):
     resp.start_stream()
     for i in range(5):
         resp.send(i)

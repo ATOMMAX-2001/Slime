@@ -40,9 +40,20 @@ mod web {
         let slime_filename = slime_obj_bound.getattr("_Slime__filename")?.to_string();
         let routes = slime_routes.cast::<PyDict>()?;
 
-        let worker_count = std::thread::available_parallelism()
+        let no_of_cpu: usize = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
+
+        let worker_count = if is_dev {
+            1
+        } else {
+            match std::env::var("SLIME_WORKER") {
+                Ok(data) => data.parse::<usize>().unwrap_or(no_of_cpu),
+                Err(_) => no_of_cpu,
+            }
+        };
+
+        println!("No of workers created: {}", worker_count);
 
         let runtime = Builder::new_multi_thread()
             .worker_threads(worker_count)
