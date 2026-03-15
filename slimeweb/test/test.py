@@ -41,7 +41,8 @@ async def land(req, resp):
 async def stream_me(req, resp):
     resp.start_stream()
     for i in range(5):
-        resp.send(i)
+        await asyncio.sleep(1)
+        resp.send(i, strict_order=False)
     resp.close()
 
 
@@ -73,4 +74,4 @@ def hello(req, resp):
 
 
 if __name__ == "__main__":
-    app.serve()
+    app.serve(dev=True)

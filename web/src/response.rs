@@ -23,7 +23,7 @@ use crate::{constant::SERVER as CONST_SERVER, server::WebSocketConn};
 #[pyclass]
 pub struct SlimeStreamResponse {
     pub content_type: String,
-    pub sender: mpsc::Sender<Result<Bytes, io::Error>>,
+    pub sender: Option<mpsc::Sender<Result<Bytes, io::Error>>>,
     pub tokio_handler: tokio::runtime::Handle,
     pub headers: HashMap<String, String>,
     pub is_started: bool,
@@ -39,7 +39,7 @@ impl SlimeStreamResponse {
     ) -> SlimeStreamResponse {
         return SlimeStreamResponse {
             content_type: content,
-            sender: tx,
+            sender: Some(tx),
             headers: HashMap::with_capacity(2),
             is_started: false,
             tokio_handler: rt_handle,
@@ -83,12 +83,10 @@ impl SlimeStreamResponse {
             let _ = header_tx.send(headers).await;
             header_tx.closed().await;
         });
-
         return Ok(());
     }
-    #[pyo3(signature = (data, strict_order=false))]
-    fn send(&self, py: Python, data: Py<PyAny>, strict_order: Option<bool>) -> PyResult<()> {
-        let maintain_order = strict_order.unwrap_or(false);
+    #[pyo3(signature = (data, strict_order=true))]
+    fn send(&self, py: Python, data: Py<PyAny>, strict_order: bool) -> PyResult<()> {
         if !self.is_started {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "You need to start the stream before streaming the data",
@@ -102,20 +100,36 @@ impl SlimeStreamResponse {
             ));
         })?;
         let tx = self.sender.clone();
-        if maintain_order {
-            let _ = tx.try_send(Ok(Bytes::copy_from_slice(json_str.as_bytes())));
+        if tx.is_none() {
+            return Err(PyErr::new::<pyo3::exceptions::PyException, _>(format!(
+                "Failed to send stream: Channel is closed"
+            )));
+        }
+        if strict_order {
+            let result = tx
+                .unwrap()
+                .try_send(Ok(Bytes::copy_from_slice(json_str.as_bytes())));
+            if let Err(err) = result {
+                return Err(PyErr::new::<pyo3::exceptions::PyException, _>(format!(
+                    "Failed to send stream: {}",
+                    err.to_string()
+                )));
+            }
         } else {
             self.tokio_handler.spawn(async move {
-                let _ = tx
+                let result = tx
+                    .unwrap()
                     .send(Ok(Bytes::copy_from_slice(json_str.as_bytes())))
                     .await;
+                if let Err(err) = result {
+                    println!("Stream Send Error: {}", err);
+                }
             });
         }
-
         return Ok(());
     }
-    fn close(&self) -> PyResult<()> {
-        let _ = &self.sender.closed();
+    fn close(&mut self) -> PyResult<()> {
+        self.sender = None;
         return Ok(());
     }
 }

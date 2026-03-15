@@ -12,7 +12,6 @@ class Routes:
         method: str = "GET",
         stream: str | None = None,
         ws: bool = False,
-        is_async: bool = False,
     ) -> None:
         if method.upper() not in ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]:
             raise ValueError(f"{method} is not Valid")
@@ -21,7 +20,6 @@ class Routes:
         self.method: str = method
         self.stream: str | None = stream
         self.ws: bool = ws
-        self.is_async: bool = is_async
 
     def __hash__(self) -> int:
         return hash((self.path, self.method, self.stream))
@@ -33,7 +31,6 @@ class Routes:
             and self.method == value.method
             and self.stream == value.stream
             and self.ws == value.ws
-            and self.is_async == value.is_async
         )
 
     def __str__(self) -> str:

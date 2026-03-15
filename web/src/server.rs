@@ -281,7 +281,6 @@ impl SlimeServer {
             let is_dev = self.is_dev;
             let filename = self.filename.to_owned();
             let tokio_runtime = self.tokio_handler.clone();
-            let is_async_handler = true;
             let event_loop_task_local = self.event_loop_task.clone();
             let request_type = if route.ws {
                 "ws"
@@ -461,22 +460,32 @@ impl SlimeServer {
                                         tokio_runtime.clone(),
                                         started_tx,
                                     );
-                                    if let Err(err) = worker_tx
-                                        .send(PyRequestWorker::Stream(PyRequestStream {
+                                    if handler[0].1{
+                                        handle_async_python_call(PyRequestWorker::Stream(PyRequestStream {
                                             handler,
                                             request: slime_request,
                                             response: new_slime_stream_resonse,
-                                        }))
-                                        .await
-                                    {
-                                        return (
-                                            StatusCode::INTERNAL_SERVER_ERROR,
-                                            format!(
-                                                "Worker cant able to handle the request (reason) => {}",
-                                                err.to_string()
-                                            ),
-                                        )
-                                            .into_response();
+                                        }), event_loop_task_local).await;
+                                    }else{
+
+
+                                        if let Err(err) = worker_tx
+                                            .send(PyRequestWorker::Stream(PyRequestStream {
+                                                handler,
+                                                request: slime_request,
+                                                response: new_slime_stream_resonse,
+                                            }))
+                                            .await
+                                        {
+                                            return (
+                                                StatusCode::INTERNAL_SERVER_ERROR,
+                                                format!(
+                                                    "Worker cant able to handle the request (reason) => {}",
+                                                    err.to_string()
+                                                ),
+                                            )
+                                                .into_response();
+                                        }
                                     }
                                     if let Some(headers) = started_rx.recv().await {
                                         let mut new_response = Response::builder()
@@ -485,6 +494,7 @@ impl SlimeServer {
                                         for (key, value) in headers {
                                             new_response = new_response.header(key, value);
                                         }
+                                        drop(started_rx);
                                         let stream = ReceiverStream::new(stream_rx);
                                         let body = Body::from_stream(stream);
                                         return new_response.body(body).unwrap();
@@ -726,6 +736,7 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
             }
         }
         PyRequestWorker::Stream(req) => {
+            println!("here");
             match Python::attach(|py| (Py::new(py, req.request), Py::new(py, req.response))) {
                 (Ok(request_py), Ok(response_py)) => {
                     let mut is_error: Option<PyErr> = None;
@@ -740,6 +751,7 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
                         }
                         return co_collections;
                     });
+
                     for co in co_collections {
                         match co {
                             Ok(co_handler) => {
@@ -757,8 +769,10 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
                             }
                             Err(err) => {
                                 is_error = Some(err);
+                                break;
                             }
                         }
+                        let _ = tokio::task::yield_now();
                     }
                     if is_error.is_some() {
                         println!("ERROR: {}", is_error.unwrap());
