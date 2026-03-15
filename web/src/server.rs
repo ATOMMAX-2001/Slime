@@ -5,6 +5,7 @@ use axum::{
         ConnectInfo, FromRequest, State,
         ws::{Message, WebSocketUpgrade},
     },
+    handler,
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
     routing::any,
@@ -678,6 +679,7 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
                     let co_collections = Python::attach(|py| {
                         let mut co_collections = Vec::with_capacity(req.handler.len());
                         for handler_method in 0..req.handler.len() {
+                            dbg!(req.handler[handler_method].1);
                             co_collections.push(
                                 req.handler[handler_method]
                                     .0
@@ -686,7 +688,6 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
                         }
                         return co_collections;
                     });
-                    dbg!(&co_collections);
                     for co in co_collections {
                         match co {
                             Ok(co_handler) => {
