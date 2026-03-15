@@ -8,9 +8,9 @@ It is designed for developers who want Python developer experience with a Rust-p
 ## Installation
 
 - pip install slimeweb
-- slime new <Project Name>
-- cd <Project Name>
-- slime run <Project Name>
+- slime new ProjectName
+- cd ProjectName
+- slime run ProjectName
 
 
 
@@ -18,9 +18,9 @@ It is designed for developers who want Python developer experience with a Rust-p
 
 ## Features
 
-- Python handler functions
+- Python handler functions 
 - Multiple worker pool model
-- Synchronous handler
+- Synchronous & Asynchronous handler
 - Multipart form support
 - File uploads
 - Streaming Response
@@ -144,3 +144,61 @@ def chatty(req, resp):
 
     resp.on_close(close_me)
 ```
+
+## Api
+
+###  Slime Request
+'''python
+  req.method -> str
+  req.path -> str
+  req.client -> str # client address
+  req.header -> Dict[str,str]
+  req.body -> Bytes
+  req.bytes -> [Bytes] (u8)
+  req.form -> Dict[str,str]
+  req.file -> [SlimeFile]
+  req.json -> Any
+  req.query -> Dict[str,str]
+  req.params -> Dict[str,str]
+  req.text -> str
+  req.secret_key -> str
+  req.get_cookies() -> Dict[str,str]
+  req.get_signed_cookie(key: str) -> str|None
+  req.render(template_name: str,Dict[str,any]|None)
+  
+'''
+
+
+
+###  HTTP Slime Response
+'''python
+  resp.set_cookie(key: str,value: str)
+  resp.set_sign_cookie(key:str,value: str,secret: str)
+  resp.set_header(key: str,value: str)
+  resp.plain(data: str)
+  resp.json(data: any) # any Pyobject which we can serialize
+  resp.html(data: str)
+  
+'''
+
+### Stream Slime Response
+'''python
+  resp.content_type ->  str
+  resp.headers -> Dict[str,str]
+  resp.set_header(key: str,value: str)
+  resp.start_stream() # to start the stream
+  resp.send(data: any) # any Pyobject which we can serialize
+  resp.close() # close stream
+  
+'''
+
+
+### Websocket Slime Response
+'''python
+   resp.id -> str
+   resp.on_message(handler: Callable)
+   resp.on_close(handler: Callable)
+   resp.send(data: any) # any Pyobject that we can serialize
+   resp.is_closed() -> bool
+  
+'''

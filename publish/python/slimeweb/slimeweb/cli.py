@@ -43,18 +43,22 @@ if __name__ == "__main__":
     print("[*] Creating an env")
     if not (root / ".venv").exists():
         os.chdir(root)
-        sp.run(
-            ["uv", "venv", "--python", "python3.14t"],
-            check=True,
-            stdout=sp.DEVNULL,
-            stderr=sp.DEVNULL,
-        )
-        sp.run(
-            ["uv", "python", "pin", "python3.14t"],
-            check=True,
-            stdout=sp.DEVNULL,
-            stderr=sp.DEVNULL,
-        )
+        try:
+            sp.run(
+                ["uv", "--native-tls", "venv", "--python", "python3.14t"],
+                check=True,
+                stdout=sp.DEVNULL,
+                stderr=sp.DEVNULL,
+            )
+            sp.run(
+                ["uv", "python", "pin", "python3.14t"],
+                check=True,
+                stdout=sp.DEVNULL,
+                stderr=sp.DEVNULL,
+            )
+        except Exception as err:
+            print("Failed to download the dependency (reason) =>", err)
+
         sp.run(["uv", "init"])
         sp.run(["uv", "add", "slimeweb"], check=True)
     print(f"\n\n[*] Project '{name}' created 🎉🎉🎉")
@@ -74,9 +78,11 @@ def run_project(script: Path):
     if not script_path.exists():
         print(f"❌ Script '{script_path}' not found")
         sys.exit(1)
-
-    command = ["uv", "run", "python", "-Xgil=0", script_path]
-    sp.run(command)
+    try:
+        command = ["uv", "run", "python", "-Xgil=0", script_path]
+        sp.run(command)
+    except Exception as err:
+        print("Error Running (reason)=> ", err)
 
 
 def display_logo():
@@ -86,7 +92,7 @@ def display_logo():
     print("   ___ \\| | | '_ ` _ \\ / _ \\ \\/  \\/ / _ \\ '_ \\ ")
     print("  ____) | | | | | | | |  __/\\  /\\  /  __/ |_) |")
     print(" |_____/|_|_|_| |_| |_|\\___| \\/  \\/ \\___|_.__/ ")
-    print("Version: 0.1.0\t\t\t Author: S.Abilash")
+    print("Version: 0.1.2\t\t\t Author: S.Abilash")
 
 
 def main():
