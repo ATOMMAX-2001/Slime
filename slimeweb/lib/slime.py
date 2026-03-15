@@ -75,16 +75,28 @@ class Slime:
                             inspect.iscoroutinefunction(middle_handler),
                         )
             else:
+                is_async = inspect.iscoroutinefunction(middle_handler)
                 for route in self.__routes:
                     if route.path == path and route.method == method:
                         call_handler = self.__routes.get(route)
-                        if call_handler is not None:
-                            call_handler["before"] = (
-                                middle_handler,
-                                inspect.iscoroutinefunction(middle_handler),
-                            )
-                            found = True
-                            break
+                        if (
+                            call_handler is not None
+                            and call_handler["handler"] is not None
+                        ):
+                            if call_handler["handler"][1] == is_async:
+                                if call_handler["before"] is None:
+                                    call_handler["before"] = (
+                                        middle_handler,
+                                        is_async,
+                                    )
+                                    found = True
+                                    break
+                                else:
+                                    error = f"Multiple middle before definition found for same Path: {path}, method: {method}"
+                                    raise ValueError(error)
+                            else:
+                                error = f"Middle before handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
+                                raise ValueError(error)
                 if not found:
                     raise ValueError(
                         "You need to define the request handler to declare middleware"
@@ -105,21 +117,33 @@ class Slime:
                 for route in self.__routes:
                     call_handler = self.__routes.get(route)
                     if call_handler is not None:
-                        call_handler["before"] = (
+                        call_handler["after"] = (
                             middle_handler,
                             inspect.iscoroutinefunction(middle_handler),
                         )
             else:
+                is_async = inspect.iscoroutinefunction(middle_handler)
                 for route in self.__routes:
                     if route.path == path and route.method == method:
                         call_handler = self.__routes.get(route)
-                        if call_handler is not None:
-                            call_handler["after"] = (
-                                middle_handler,
-                                inspect.iscoroutinefunction(middle_handler),
-                            )
-                            found = True
-                            break
+                        if (
+                            call_handler is not None
+                            and call_handler["handler"] is not None
+                        ):
+                            if call_handler["handler"][1] == is_async:
+                                if call_handler["after"] is None:
+                                    call_handler["after"] = (
+                                        middle_handler,
+                                        is_async,
+                                    )
+                                    found = True
+                                    break
+                                else:
+                                    error = f"Multiple middle after definition found for same Path: {path}, method: {method}"
+                                    raise ValueError(error)
+                            else:
+                                error = f"Middle after handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
+                                raise ValueError(error)
                 if not found:
                     raise ValueError(
                         "You need to define the request handler to declare middleware"
