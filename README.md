@@ -148,7 +148,7 @@ def chatty(req, resp):
 ## Api
 
 ###  Slime Request
-'''python
+```python
   req.method -> str
   req.path -> str
   req.client -> str # client address
@@ -166,12 +166,12 @@ def chatty(req, resp):
   req.get_signed_cookie(key: str) -> str|None
   req.render(template_name: str,Dict[str,any]|None)
   
-'''
+```
 
 
 
 ###  HTTP Slime Response
-'''python
+```python
   resp.set_cookie(key: str,value: str)
   resp.set_sign_cookie(key:str,value: str,secret: str)
   resp.set_header(key: str,value: str)
@@ -179,10 +179,10 @@ def chatty(req, resp):
   resp.json(data: any) # any Pyobject which we can serialize
   resp.html(data: str)
   
-'''
+```
 
 ### Stream Slime Response
-'''python
+```python
   resp.content_type ->  str
   resp.headers -> Dict[str,str]
   resp.set_header(key: str,value: str)
@@ -190,15 +190,15 @@ def chatty(req, resp):
   resp.send(data: any) # any Pyobject which we can serialize
   resp.close() # close stream
   
-'''
+```
 
 
 ### Websocket Slime Response
-'''python
+```python
    resp.id -> str
    resp.on_message(handler: Callable)
    resp.on_close(handler: Callable)
    resp.send(data: any) # any Pyobject that we can serialize
    resp.is_closed() -> bool
   
-'''
+```
