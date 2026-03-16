@@ -121,6 +121,7 @@ The exact way you handle and populate the response depends on the route type (e.
 
 ## Request Body
 
+Slime supports all kinds of request body
 ```python
 @app.route(path="/test", method="POST")
 def hello(req, resp):
@@ -138,6 +139,11 @@ def hello(req, resp):
 
 
 ### File Upload
+
+In your Slime file handler, access uploaded files via the **req.file** attribute, it returns a list of **SlimeFile** objects (Refer below for SlimeFile **api**).
+
+**Note**: For security, Slime automatically strips the original file extension and assigns a unique filename to each uploaded file.
+
 ```python
 @app.route(path="/test", method="POST")
 def hello(req, resp):
@@ -200,7 +206,9 @@ You can also generate
 ### Middleware
 
 Middleware  should be declared after declaring route handler 
-**LifeCycle handler => middle before request -> router handler -> middle after request**
+
+**LifeCycle of request handler**
+Middle before request **->** Router handler **->** Middle after request
 
 ```python
 @app.middle_before(path="/", method="GET")
@@ -217,6 +225,13 @@ def land_after(req, resp):
 **NOTE:** Middleware handlers must match the **route handler's type**. If your route handler is asynchronous, the middleware must also be async (and vice versa for sync).
 
 ### Streaming
+
+Streaming in slime is simple and straightforward. When declaring your route, specify the stream's **content-type**. 
+You can add any headers to the response before calling **start_stream()**. Once start_stream is called, streaming begins to the user.
+Use **send()** to stream data chunks and slime automatically serializes them before sending. 
+Call **close()** when done to end the connection.
+
+**NOTE:** Updating headers after start_stream() will cause an error.
 
 ```python
 @app.route(path="/stream", method="GET", stream="text/plain")
@@ -239,19 +254,29 @@ def stream_me(req, resp):
 
 
 ### WebSocket
+
+WebSockets in Slime are event-driven, meaning Slime calls specific callback methods when key events happen.
+
+You'll typically need two optional callbacks (not required):
+- One for when data is received from the client
+- One for when the client disconnects
+
+In the echo example below, the **read_me()** callback first checks if the client is still connected. If yes, it echoes back the exact message it received.
+
+**NOTE:** The on_message() callback must accept 1 argument which is the data sent by the client.
+
 ```python
 @app.websocket(path="/chat", method="GET")
 def chatty(req, resp):
 
     def read_me(msg):
         if not resp.is_closed():
-            resp.send(msg)
-
-    resp.on_message(read_me)
+            resp.send(msg)    
 
     def close_me():
         pass
 
+    resp.on_message(read_me)
     resp.on_close(close_me)
 ```
 
@@ -282,9 +307,9 @@ def chatty(req, resp):
 
 ###  HTTP Slime Response
 ```python
-  resp.set_cookie(key: str,value: str)
-  resp.set_sign_cookie(key:str,value: str,secret: str)
-  resp.set_header(key: str,value: str)
+  resp.set_cookie(key: str,value: str) -> None
+  resp.set_sign_cookie(key:str,value: str,secret: str) -> None
+  resp.set_header(key: str,value: str) -> None
   resp.plain(data: str)
   resp.json(data: any) # any Pyobject which we can serialize
   resp.html(data: str)
@@ -311,8 +336,8 @@ def chatty(req, resp):
 ### Websocket Slime Response
 ```python
    resp.id -> str
-   resp.on_message(handler: Callable)
-   resp.on_close(handler: Callable)
+   resp.on_message(handler: Callable) -> None
+   resp.on_close(handler: Callable) -> None
    resp.send(data: any) # any Pyobject that we can serialize
    resp.is_closed() -> bool
   
@@ -325,4 +350,6 @@ def chatty(req, resp):
     slimefile_obj.file_path -> str
     slimefile_obj.file_size -> int
     slimefile_obj.extension -> str
+    slimefile_obj.save(new_filename: str) -> None
+    slimefile_obj.clean() -> None # remove temp file
 ```
