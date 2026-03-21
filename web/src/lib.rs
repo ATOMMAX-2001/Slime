@@ -33,6 +33,7 @@ mod web {
         port: usize,
         secret_key: String,
         is_dev: bool,
+        app_states: Py<PyDict>,
     ) -> PyResult<()> {
         println!("Initializing...");
         let slime_obj_bound = slime_obj.bind(py);
@@ -70,6 +71,7 @@ mod web {
             slime_filename,
             is_dev,
             runtime_handler,
+            app_states,
         );
 
         server.load_routes(routes)?;

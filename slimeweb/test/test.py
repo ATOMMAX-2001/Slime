@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 from lib import slime
 
@@ -21,21 +22,29 @@ async def chatty(req, resp):
     resp.on_close(close_me)
 
 
+@app.route(path="/plain", method="GET")
+def land_plain(req, resp):
+    return resp.plain("hello world")
+
+
 @app.route(path="/", method="GET")
-async def land(req, resp):
-    await asyncio.sleep(1)
-    html = req.render("hello.html", **{"name": "abilash", "age": 24})
+def land(req, resp):
+    counter = req.get_state("counter")
+    html = req.render(
+        "hello.html", **{"name": "abilash", "age": 24, "counter": counter}
+    )
+    req.update_state("counter", counter + 1)
     return resp.html(html)
 
 
-@app.middle_after(path="/", method="GET")
-async def land_after(req, resp):
-    resp.set_header("BEFORE", "Request")
+# @app.middle_after(path="/", method="GET")
+# async def land_after(req, resp):
+#     resp.set_header("BEFORE", "Request")
 
 
-@app.middle_before(path="/", method="GET")
-async def land_before(req, resp):
-    resp.set_header("AFTER", "REQUEST")
+# @app.middle_before(path="/", method="GET")
+# async def land_before(req, resp):
+#     resp.set_header("AFTER", "REQUEST")
 
 
 @app.route(path="/stream", method="GET", stream="text/plain")
@@ -56,23 +65,19 @@ def hello(req, resp):
     # print("form", req.form)
     # print("text", req.text)
     # print("bytes", req.bytes)
-    # print("file",req.file)
+    # print("file", req.file)
     # print("*" * 10)
-    # for i in ["abilash", "abi", "atom"]:
-    file = req.file[0]
-    print(file.filename)
-    print(file.content_type)
-    print(file.file_path)
-    print(file.file_size)
-    print(file.extension)
-    file.save(f"testing_file.{file.extension}")
+    for file in req.file:
+        print(file.filename)
+        print(file.content_type)
+        print(file.file_path)
+        print(file.file_size)
+        print(file.extension)
+        file.save(f"./testing_file.{file.extension}")
     return resp.json({"status": "ok"})
     # html = req.render("hello.html", **{"name": "abi", "age": 24})
     # return resp.html(html)
 
 
-# return resp.json({"name": "abilash", "age": 24})
-
-
 if __name__ == "__main__":
-    app.serve()
+    app.serve(app_state={"counter": 0})

@@ -35,9 +35,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
 
-use crate::constant::SERVER;
 use crate::request::{SlimeFile, SlimeRequest};
 use crate::response::{SlimeResponse, SlimeStreamResponse, SlimeWebSocketResponse};
+use crate::{constant::SERVER, request::SlimeState};
 
 use futures_util::SinkExt;
 use pyo3_async_runtimes::{self as py_asyncio, TaskLocals};
@@ -114,6 +114,7 @@ pub struct PyRequestWebSocket {
 
 #[derive(Clone)]
 pub struct WebSocketConnectionBook {
+    room: DashMap<String, Vec<WebSocketConn>>,
     connection: Arc<DashMap<Uuid, WebSocketConn>>,
 }
 
@@ -123,6 +124,9 @@ impl WebSocketConnectionBook {
     }
     pub fn remoe_conn(&self, id: Uuid) {
         self.connection.remove(&id);
+    }
+    pub fn create_room(&mut self, room_id: String) {
+        self.room.insert(room_id, Vec::with_capacity(5));
     }
 }
 
@@ -138,6 +142,7 @@ pub struct SlimeServer {
     template: Arc<Environment<'static>>,
     tokio_handler: tokio::runtime::Handle,
     event_loop_task: TaskLocals,
+    app_states: SlimeState,
 }
 
 impl SlimeServer {
@@ -149,6 +154,7 @@ impl SlimeServer {
         filename: String,
         is_dev: bool,
         tokio_runtime_handler: tokio::runtime::Handle,
+        app_states: Py<PyDict>,
     ) -> SlimeServer {
         let env = SlimeServer::get_template_environment(&filename);
         let local_event_loop = Python::attach(|py| {
@@ -186,6 +192,7 @@ impl SlimeServer {
             template: Arc::new(env),
             tokio_handler: tokio_runtime_handler,
             event_loop_task: local_event_loop,
+            app_states: SlimeState::new(app_states),
         }
     }
     fn get_template_environment(filename: &String) -> Environment<'static> {
@@ -282,6 +289,7 @@ impl SlimeServer {
             let filename = self.filename.to_owned();
             let tokio_runtime = self.tokio_handler.clone();
             let event_loop_task_local = self.event_loop_task.clone();
+            let slime_app_state = self.app_states.clone();
             let request_type = if route.ws {
                 "ws"
             } else if stream_content.is_some() {
@@ -437,6 +445,7 @@ impl SlimeServer {
                                 form: form_body,
                                 files: file_body,
                                 params: params,
+                                states: slime_app_state
                             };
 
                             // send request to python workers
@@ -557,7 +566,7 @@ impl SlimeServer {
     pub async fn server_run(self) -> PyResult<()> {
         let address: SocketAddr = format!("{}:{}", self.host, self.port).parse()?;
         let server_router = self.set_server_routes();
-        let listener = TcpListener::bind(address).await.unwrap();
+        let listener = TcpListener::bind(address).await?;
 
         println!("Slime server is running at {}", address);
         let _ = axum::serve(
@@ -565,6 +574,7 @@ impl SlimeServer {
             server_router
                 .with_state(WebSocketConnectionBook {
                     connection: Arc::new(DashMap::with_capacity(5)),
+                    room: DashMap::with_capacity(5),
                 })
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )

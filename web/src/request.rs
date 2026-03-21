@@ -10,7 +10,7 @@ use sha2::Sha256;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use subtle::ConstantTimeEq;
 
 #[derive(Clone)]
@@ -54,13 +54,38 @@ impl SlimeFile {
     }
 
     fn save(&self, new_filename: String) -> PyResult<()> {
-        std::fs::rename(&self.temp_path, new_filename)?;
+        match std::fs::rename(&self.temp_path, &new_filename) {
+            Ok(_) => {}
+            Err(_) => {
+                std::fs::copy(&self.temp_path, &new_filename)?;
+            }
+        }
         return Ok(());
     }
 
     fn clean(&self) -> PyResult<()> {
         std::fs::remove_file(&self.temp_path)?;
         return Ok(());
+    }
+}
+
+pub struct SlimeState {
+    pub app_state: Py<PyDict>,
+}
+
+impl SlimeState {
+    pub fn new(app_state: Py<PyDict>) -> SlimeState {
+        SlimeState {
+            app_state: app_state,
+        }
+    }
+}
+
+impl Clone for SlimeState {
+    fn clone(&self) -> Self {
+        SlimeState {
+            app_state: Python::attach(|py| self.app_state.clone_ref(py)),
+        }
     }
 }
 
@@ -78,6 +103,7 @@ pub struct SlimeRequest {
     pub files: Option<Vec<SlimeFile>>,
     pub secret: Arc<Vec<u8>>,
     pub template: Arc<Environment<'static>>,
+    pub states: SlimeState,
 }
 
 impl SlimeRequest {
@@ -196,6 +222,21 @@ impl SlimeRequest {
         }
 
         return Ok(cookies);
+    }
+
+    fn get_state(&self, py: Python, key: &str) -> PyResult<Option<Py<PyAny>>> {
+        let bind_dict_state = self.states.app_state.bind(py);
+        if let Ok(Some(value)) = bind_dict_state.get_item(key) {
+            return Ok(Some(value.unbind()));
+        } else {
+            return Ok(None);
+        }
+    }
+
+    fn update_state(&mut self, py: Python, key: &str, value: Py<PyAny>) -> PyResult<()> {
+        let bind_dict_state = self.states.app_state.bind(py);
+        bind_dict_state.set_item(key, value)?;
+        return Ok(());
     }
 
     fn get_signed_cookie(&self, key: &str) -> PyResult<Option<String>> {

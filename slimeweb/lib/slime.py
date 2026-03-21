@@ -2,7 +2,7 @@
 # Email: abinix01@gmail.com
 
 import inspect
-from typing import Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Tuple
 
 
 class Routes:
@@ -221,6 +221,7 @@ class Slime:
         port: int = 3000,
         secret_key: str | None = None,
         dev: bool = False,
+        app_state: Dict[str, Any] = {},
     ) -> None:
         if secret_key is None:
             import secrets
@@ -229,6 +230,6 @@ class Slime:
 
         import web
 
-        web.init_web(self, host, port, secret_key, dev)
+        web.init_web(self, host, port, secret_key, dev, app_state)
         print("Slime server is shutting down...")
         print("Finished")
