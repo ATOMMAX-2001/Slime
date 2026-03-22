@@ -40,7 +40,7 @@ if __name__ == "__main__":
 
     script_path.write_text(code)
 
-    print("[*] Creating an env")
+    print("[*] Creating an env\n")
     if not (root / ".venv").exists():
         os.chdir(root)
         try:

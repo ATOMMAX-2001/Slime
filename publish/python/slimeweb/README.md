@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="https://raw.githubusercontent.com/Abilash2001/SlimeWeb/main/bench/slime_photo.png" width="300">
+</div>
+
 # Slime – A Rust + Python Hybrid Web Framework
 
 Slime is a high-performance web framework that combines Rust and python
@@ -18,8 +22,7 @@ It is designed for developers who want Python developer experience with a Rust-p
     cd ProjectName
     slime run ProjectName
 ```
-Once you have ran try opening the browser and enter **localhost:3000/**
-you will see the below
+After running these commands, open your browser and navigate to **localhost:3000**. You'll see this message displayed:
 
 ```plain
 Hello World from slime
@@ -119,6 +122,35 @@ Every handler receives exactly two arguments:
 
 The exact way you handle and populate the response depends on the route type (e.g., HTTP,Streaming or Websocket). Check the **API & Examples** reference below for type-specific details.
 
+To start the Slime server we should use **server()** method.
+
+```python
+ app.serve()
+```
+**serve()** has few optional argument you can pass
+
+- host (default 127.0.0.1)
+- port (default 3000)
+- secret_key (default None, used for cookie sign)
+- dev (default False)
+- app_state (default {})
+
+**Worker:**
+
+You can control the number of workers using the **SLIME_WORKER** environment variable.
+
+- In development mode, it defaults to 1 worker
+- In production, it automatically uses the number of CPU cores
+
+```bash
+ export SLIME_WORKER=3
+ 
+ OR
+ 
+ $ENV:SLIME_WORKER="3"
+```
+
+
 ## Request Body
 
 Slime supports all kinds of request body
@@ -203,11 +235,28 @@ You can also generate
 - Config File
 - HTML & etc..
 
+### App State
+
+App state allows you to maintain shared data across requests during your app's lifecycle.
+
+Initialize app state when starting your server
+
+```python
+app.serve(app_state={"counter": 0})
+```
+Within each handler, the current app state is automatically injected into the **SlimeRequest** object. Use these methods to interact with it:
+
+- **req.get_state(key)**, To retrieve the current value for a given key.
+- **req.update_state(key,value)**, To update the value for a given key.
+
+**NOTE:** SlimeState is not atomic. In concurrent scenario with multiple simultaneous request, race condition may occur during state updates, Potentially leading to incorrect values. For production when working with high concurrency, consider implementing your own synchronization or use external state store.
+
 ### Middleware
 
 Middleware  should be declared after declaring route handler 
 
 **LifeCycle of request handler**
+
 Middle before request **->** Router handler **->** Middle after request
 
 ```python
@@ -300,7 +349,9 @@ def chatty(req, resp):
   req.get_cookies() -> Dict[str,str]
   req.get_signed_cookie(key: str) -> str|None
   req.render(template_name: str,Dict[str,any]|None)
-  
+  req.no_of_files_available() -> int
+  req.get_state(key: str) -> Any
+  req.update_state(key: str,value: Any)
 ```
 
 
@@ -353,3 +404,17 @@ def chatty(req, resp):
     slimefile_obj.save(new_filename: str) -> None
     slimefile_obj.clean() -> None # remove temp file
 ```
+
+
+### Benchmark
+[BenchMark Code with slime example:](https://github.com/Abilash2001/SlimeWeb/)
+
+![Slimeweb benchmark](https://raw.githubusercontent.com/Abilash2001/SlimeWeb/main/bench/slimebench.png)
+
+
+### License
+
+This project is licensed under the terms of **MIT** license
+
+
+Thank You & enjoy using SlimeWeb ❤️

@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="https://raw.githubusercontent.com/Abilash2001/SlimeWeb/main/bench/slime_photo.png" width="300">
+</div>
+
 # Slime – A Rust + Python Hybrid Web Framework
 
 Slime is a high-performance web framework that combines Rust and python
@@ -117,6 +121,35 @@ Every handler receives exactly two arguments:
 - **SlimeResponse**: The response object you'll use to build and send the output back to the client.
 
 The exact way you handle and populate the response depends on the route type (e.g., HTTP,Streaming or Websocket). Check the **API & Examples** reference below for type-specific details.
+
+To start the Slime server we should use **server()** method.
+
+```python
+ app.serve()
+```
+**serve()** has few optional argument you can pass
+
+- host (default 127.0.0.1)
+- port (default 3000)
+- secret_key (default None, used for cookie sign)
+- dev (default False)
+- app_state (default {})
+
+**Worker:**
+
+You can control the number of workers using the **SLIME_WORKER** environment variable.
+
+- In development mode, it defaults to 1 worker
+- In production, it automatically uses the number of CPU cores
+
+```bash
+ export SLIME_WORKER=3
+ 
+ OR
+ 
+ $ENV:SLIME_WORKER="3"
+```
+
 
 ## Request Body
 
@@ -372,6 +405,16 @@ def chatty(req, resp):
     slimefile_obj.clean() -> None # remove temp file
 ```
 
+
+### Benchmark
+[BenchMark Code with slime example:](https://github.com/Abilash2001/SlimeWeb/)
+
+![Slimeweb benchmark](https://raw.githubusercontent.com/Abilash2001/SlimeWeb/main/bench/slimebench.png)
+
+
 ### License
 
-This project is licensed under the terms of MIT license
+This project is licensed under the terms of **MIT** license
+
+
+Thank You & enjoy using SlimeWeb ❤️
