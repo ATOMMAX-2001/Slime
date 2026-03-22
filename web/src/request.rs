@@ -10,7 +10,7 @@ use sha2::Sha256;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
 #[derive(Clone)]

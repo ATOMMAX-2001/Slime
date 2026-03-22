@@ -114,7 +114,6 @@ pub struct PyRequestWebSocket {
 
 #[derive(Clone)]
 pub struct WebSocketConnectionBook {
-    room: DashMap<String, Vec<WebSocketConn>>,
     connection: Arc<DashMap<Uuid, WebSocketConn>>,
 }
 
@@ -124,9 +123,6 @@ impl WebSocketConnectionBook {
     }
     pub fn remoe_conn(&self, id: Uuid) {
         self.connection.remove(&id);
-    }
-    pub fn create_room(&mut self, room_id: String) {
-        self.room.insert(room_id, Vec::with_capacity(5));
     }
 }
 
@@ -574,7 +570,6 @@ impl SlimeServer {
             server_router
                 .with_state(WebSocketConnectionBook {
                     connection: Arc::new(DashMap::with_capacity(5)),
-                    room: DashMap::with_capacity(5),
                 })
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )

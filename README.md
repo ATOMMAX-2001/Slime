@@ -18,8 +18,7 @@ It is designed for developers who want Python developer experience with a Rust-p
     cd ProjectName
     slime run ProjectName
 ```
-Once you have ran try opening the browser and enter **localhost:3000/**
-you will see the below
+After running these commands, open your browser and navigate to **localhost:3000**. You'll see this message displayed:
 
 ```plain
 Hello World from slime
@@ -203,11 +202,28 @@ You can also generate
 - Config File
 - HTML & etc..
 
+### App State
+
+App state allows you to maintain shared data across requests during your app's lifecycle.
+
+Initialize app state when starting your server
+
+```python
+app.serve(app_state={"counter": 0})
+```
+Within each handler, the current app state is automatically injected into the **SlimeRequest** object. Use these methods to interact with it:
+
+- **req.get_state(key)**, To retrieve the current value for a given key.
+- **req.update_state(key,value)**, To update the value for a given key.
+
+**NOTE:** SlimeState is not atomic. In concurrent scenario with multiple simultaneous request, race condition may occur during state updates, Potentially leading to incorrect values. For production when working with high concurrency, consider implementing your own synchronization or use external state store.
+
 ### Middleware
 
 Middleware  should be declared after declaring route handler 
 
 **LifeCycle of request handler**
+
 Middle before request **->** Router handler **->** Middle after request
 
 ```python
@@ -300,7 +316,9 @@ def chatty(req, resp):
   req.get_cookies() -> Dict[str,str]
   req.get_signed_cookie(key: str) -> str|None
   req.render(template_name: str,Dict[str,any]|None)
-  
+  req.no_of_files_available() -> int
+  req.get_state(key: str) -> Any
+  req.update_state(key: str,value: Any)
 ```
 
 
@@ -353,3 +371,7 @@ def chatty(req, resp):
     slimefile_obj.save(new_filename: str) -> None
     slimefile_obj.clean() -> None # remove temp file
 ```
+
+### License
+
+This project is licensed under the terms of MIT license
