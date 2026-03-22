@@ -26,6 +26,20 @@ def land_plain(req, resp):
     return resp.plain("hello world")
 
 
+@app.route(path="/json", method="GET")
+def land_json(req, resp):
+    return resp.json({"name": "abilash", "slimeversion": "V0.1.3"})
+
+
+@app.route(path="/render", method="GET")
+def land_render(req, resp):
+    html = req.render(
+        "hello.html",
+        **{"name": "abilash", "age": 24},
+    )
+    return resp.html(html)
+
+
 @app.route(path="/", method="GET")
 def land(req, resp):
     counter = req.get_state("counter")
@@ -48,10 +62,10 @@ def land(req, resp):
 
 @app.route(path="/stream", method="GET", stream="text/plain")
 async def stream_me(req, resp):
+    await asyncio.sleep(1)
     resp.start_stream()
     for i in range(5):
-        await asyncio.sleep(1)
-        resp.send(i, strict_order=False)
+        resp.send(i)
     resp.close()
 
 
