@@ -250,7 +250,9 @@ impl SlimeResponse {
         return Ok(());
     }
 
-    fn plain(&mut self, resp_obj: String) -> PyResult<()> {
+    #[pyo3(signature = (resp_obj,status=200))]
+    fn plain(&mut self, resp_obj: String, status: u16) -> PyResult<()> {
+        self.status = status;
         self.body = Some(resp_obj);
         return Ok(());
     }
@@ -260,7 +262,8 @@ impl SlimeResponse {
         return Ok(());
     }
 
-    fn json(&mut self, resp_obj: Py<PyAny>, py: Python) -> PyResult<()> {
+    #[pyo3(signature = (resp_obj,status=200))]
+    fn json(&mut self, resp_obj: Py<PyAny>, status: u16, py: Python) -> PyResult<()> {
         let value: serde_json::Value = depythonize(resp_obj.bind(py))?;
         let json_str = serde_json::to_string(&value).map_err(|err| {
             return PyErr::new::<pyo3::exceptions::PyException, _>(format!(
@@ -268,13 +271,16 @@ impl SlimeResponse {
                 err
             ));
         })?;
+        self.status = status;
         self.body = Some(json_str);
         self.content_type = "application/json".to_string();
         return Ok(());
     }
 
-    fn html(&mut self, body: String) -> PyResult<()> {
-        self.body = Some(body);
+    #[pyo3(signature = (resp_obj,status=200))]
+    fn html(&mut self, resp_obj: String, status: u16) -> PyResult<()> {
+        self.status = status;
+        self.body = Some(resp_obj);
         self.content_type = "text/html; charset=utf-8".to_string();
         return Ok(());
     }

@@ -24,7 +24,7 @@ subtle = "2.6.1"
 minijinja = { version="2.16.0",features=["loader"] }
 serde_urlencoded = "0.7.1"
 multer = "3.1.0"
-tower-http = {version ="0.6.8", features = ["fs"] }
+tower-http = {version ="0.6.8", features = ["fs","compression-gzip","compression-br","compression-zstd"] }
 futures-util = "0.3.32"
 tokio-util = "0.7.18"
 uuid = { version="1.21.0",features=["v4"] }

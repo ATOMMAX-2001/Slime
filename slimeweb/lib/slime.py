@@ -2,9 +2,26 @@
 # Email: abinix01@gmail.com
 
 import inspect
+from enum import Enum
 from typing import Any, Callable, Dict, List, Literal, Tuple
 
-AVAILABLE_METHOD = ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]
+from .errors import (
+    InvalidHandler,
+    InvalidMiddlewareHandlerType,
+    MethodException,
+    MultipleMiddlewareException,
+    MultipleRouteException,
+    RouteHandlerNotFoundException,
+)
+
+AVAILABLE_METHOD = ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS", "HEAD"]
+
+
+class SlimeCompression(Enum):
+    NoCompression = 0
+    Gzip = 1
+    Brotli = 2
+    Zstd = 3
 
 
 class Routes:
@@ -14,26 +31,26 @@ class Routes:
         method: str = "GET",
         stream: str | None = None,
         ws: bool = False,
+        compression: SlimeCompression = SlimeCompression.NoCompression,
     ) -> None:
         global AVAILABLE_METHOD
         if method.upper() not in AVAILABLE_METHOD:
-            raise ValueError(f"{method} is not Valid")
+            raise MethodException(f"{method} is not Valid")
 
         self.path: str = path
         self.method: str = method
         self.stream: str | None = stream
         self.ws: bool = ws
+        self.compression: int = compression.value
 
     def __hash__(self) -> int:
-        return hash((self.path, self.method, self.stream))
+        return hash((self.path, self.method))
 
     def __eq__(self, value: object) -> bool:
         return (
             isinstance(value, Routes)
             and self.path == value.path
             and self.method == value.method
-            and self.stream == value.stream
-            and self.ws == value.ws
         )
 
     def __str__(self) -> str:
@@ -42,6 +59,16 @@ class Routes:
             Method: {self.method}
             {f"Stream: {self.stream}" if self.stream is not None else ""}
             {f"Websocket: {self.ws}" if self.ws is not None else ""}
+            {f"Compression: {self.compression}" if self.compression is not None else ""}
+        """
+
+    def __repr__(self) -> str:
+        return f"""
+            Path: {self.path}
+            Method: {self.method}
+            {f"Stream: {self.stream}" if self.stream is not None else "False"}
+            {f"Websocket: {self.ws}" if self.ws is not None else "False"}
+            {f"Compression: {self.compression}" if self.compression is not None else "No Compression"}
         """
 
 
@@ -83,12 +110,12 @@ class Slime:
                             break
                         else:
                             error = f"Multiple middle before definition found for same Path: {path}, method: {method}"
-                            raise ValueError(error)
+                            raise MultipleMiddlewareException(error)
                     else:
                         error = f"Middle before handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
-                        raise ValueError(error)
+                        raise InvalidMiddlewareHandlerType(error)
         if not found:
-            raise ValueError(
+            raise RouteHandlerNotFoundException(
                 "You need to define the request handler to declare middleware"
             )
 
@@ -97,7 +124,7 @@ class Slime:
     ) -> Callable:
         def wrapper(middle_handler) -> Callable:
             if middle_handler is None or not callable(middle_handler):
-                raise ValueError(
+                raise InvalidHandler(
                     f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
                 )
             # apply this middleware to all the available route or path
@@ -146,7 +173,7 @@ class Slime:
     def middle_after(self, path: str = "/", method: str = "GET") -> Callable:
         def wrapper(middle_handler) -> Callable:
             if middle_handler is None or not callable(middle_handler):
-                raise ValueError(
+                raise InvalidHandler(
                     f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
                 )
             if path == "*":
@@ -192,16 +219,29 @@ class Slime:
         return wrapper
 
     def __apply_route(
-        self, handler: Callable, path: str, method: str, stream: str | None, ws: bool
+        self,
+        handler: Callable,
+        path: str,
+        method: str,
+        stream: str | None,
+        ws: bool,
+        compression: SlimeCompression,
     ):
-        self.__routes[Routes(path, method, stream, ws)] = {
-            "handler": (
-                handler,
-                inspect.iscoroutinefunction(handler),
-            ),
-            "before": None,
-            "after": None,
-        }
+        new_route = Routes(path, method, stream, ws, compression)
+
+        if new_route not in self.__routes:
+            self.__routes[new_route] = {
+                "handler": (
+                    handler,
+                    inspect.iscoroutinefunction(handler),
+                ),
+                "before": None,
+                "after": None,
+            }
+        else:
+            raise MultipleRouteException(
+                f"Multiple route definition for Path: {path} and Method: {method}"
+            )
 
     def route(
         self,
@@ -209,10 +249,11 @@ class Slime:
         method: str | List[str] = "GET",
         stream: str | None = None,
         ws: bool = False,
+        compression: SlimeCompression = SlimeCompression.NoCompression,
     ) -> Callable:
         def wrapper(route_handler) -> Callable:
             if route_handler is None or not callable(route_handler):
-                raise ValueError(
+                raise InvalidHandler(
                     f"Route handler should be a function for [Path: {path}, Method: {method}]"
                 )
             if isinstance(method, list):
@@ -223,6 +264,7 @@ class Slime:
                         path=path,
                         stream=stream,
                         ws=ws,
+                        compression=compression,
                     )
             else:
                 if method == "*":
@@ -234,6 +276,7 @@ class Slime:
                             stream=stream,
                             ws=ws,
                             path=path,
+                            compression=compression,
                         )
                 else:
                     self.__apply_route(
@@ -242,6 +285,7 @@ class Slime:
                         stream=stream,
                         ws=ws,
                         path=path,
+                        compression=compression,
                     )
             return route_handler
 
@@ -255,7 +299,7 @@ class Slime:
     ) -> Callable:
         def wrapper(stream_handler) -> Callable:
             if stream_handler is None or not callable(stream_handler):
-                raise ValueError(
+                raise InvalidHandler(
                     f"Stream handler should be a function for [Path: {path}, Method: {method}]"
                 )
             if not isinstance(content, str):
@@ -288,7 +332,7 @@ class Slime:
     def websocket(self, path: str = "/", method: str = "GET") -> Callable:
         def wrapper(websocket_handler) -> Callable:
             if websocket_handler is None or not callable(websocket_handler):
-                raise ValueError(
+                raise InvalidHandler(
                     f"Websocket handler should be a function for [Path: {path}, Method: {method}]"
                 )
             self.__routes[Routes(path, method, stream=None, ws=True)] = {
@@ -318,7 +362,6 @@ class Slime:
             import secrets
 
             secret_key = secrets.token_urlsafe(30)
-
         import web
 
         web.init_web(self, host, port, secret_key, dev, app_state)
