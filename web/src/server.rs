@@ -7,7 +7,7 @@ use axum::{
     },
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
-    routing::{MethodRouter, any},
+    routing::MethodRouter,
 };
 
 use bytes::Bytes;
@@ -15,7 +15,7 @@ use dashmap::DashMap;
 use futures_util::StreamExt;
 use pyo3::types::PyDict;
 use pyo3::{prelude::*, types::PyTuple};
-use rayon::{ThreadPoolBuilder, yield_now};
+use rayon::{ThreadPool, ThreadPoolBuilder, yield_now};
 
 use axum::extract::Path;
 use minijinja::{AutoEscape, Environment, path_loader};
@@ -27,7 +27,6 @@ use std::sync::{
 use std::{io, net::SocketAddr};
 use tokio::{
     net::TcpListener,
-    process,
     runtime::Handle,
     signal,
     sync::{mpsc, oneshot},
@@ -134,6 +133,8 @@ pub struct SlimeServer {
     host: String,
     port: usize,
     worker_txs: Arc<Vec<mpsc::Sender<PyRequestWorker>>>,
+    pool: ThreadPool,
+    pool_channel: (mpsc::Sender<usize>, mpsc::Receiver<usize>),
     request_counter: Arc<AtomicUsize>,
     secret_key: Arc<Vec<u8>>,
     template: Arc<Environment<'static>>,
@@ -147,6 +148,7 @@ impl SlimeServer {
         host: String,
         port: usize,
         worker_txs: Arc<Vec<mpsc::Sender<PyRequestWorker>>>,
+        pool: ThreadPool,
         secret_key: String,
         filename: String,
         is_dev: bool,
@@ -177,6 +179,7 @@ impl SlimeServer {
             });
             return local_event;
         });
+        let pool_channel = mpsc::channel::<usize>(10);
         SlimeServer {
             filename: filename,
             is_dev: is_dev,
@@ -184,12 +187,24 @@ impl SlimeServer {
             host,
             port,
             worker_txs,
+            pool,
+            pool_channel,
             request_counter: Arc::new(AtomicUsize::new(0)),
             secret_key: Arc::new(secret_key.as_bytes().to_vec()),
             template: Arc::new(env),
             tokio_handler: tokio_runtime_handler,
             event_loop_task: local_event_loop,
             app_states: SlimeState::new(app_states),
+        }
+    }
+    pub async fn new_worker(&mut self) {
+        while let Some(old) = self.pool_channel.1.recv().await {
+            let (tx, rx) = mpsc::channel::<PyRequestWorker>(1024 * 1024 * 10);
+            let mut new_worker_tx = (*self.worker_txs).clone();
+            new_worker_tx[old] = tx;
+            let runtime_handler_clone = self.tokio_handler.clone();
+            self.pool
+                .spawn(move || handle_python_call(rx, runtime_handler_clone));
         }
     }
     fn get_template_environment(filename: &String) -> Environment<'static> {
@@ -287,6 +302,7 @@ impl SlimeServer {
             let tokio_runtime = self.tokio_handler.clone();
             let event_loop_task_local = self.event_loop_task.clone();
             let slime_app_state = self.app_states.clone();
+            let pool_channel = self.pool_channel.0.clone();
             let request_type = if route.ws {
                 "ws"
             } else if stream_content.is_some() {
@@ -551,11 +567,15 @@ impl SlimeServer {
                         Ok(Err(err)) => {
                             (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
                         }
-                        Err(_) => (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "Worker cant able to handle the response".to_string(),
-                        )
-                            .into_response(),
+                        Err(_) => {
+                            println!("INFO: Creating new worker...");
+                            let _ = pool_channel.send(idx % worker_count).await;
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "Worker cant able to handle the response".to_string(),
+                            )
+                                .into_response();
+                        }
                     }
                 }
             };
@@ -692,7 +712,7 @@ async fn websocket_handler(
 pub fn spawn_python_workers(
     worker_count: usize,
     runtime_handler: Handle,
-) -> Arc<Vec<mpsc::Sender<PyRequestWorker>>> {
+) -> (Arc<Vec<mpsc::Sender<PyRequestWorker>>>, ThreadPool) {
     let mut worker_txs = Vec::with_capacity(worker_count);
     let pool = ThreadPoolBuilder::new()
         .num_threads(worker_count)
@@ -705,7 +725,7 @@ pub fn spawn_python_workers(
         worker_txs.push(tx.clone());
         pool.spawn(move || handle_python_call(rx, runtime_handler_clone.clone()));
     }
-    return Arc::new(worker_txs);
+    return (Arc::new(worker_txs), pool);
 }
 
 async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: TaskLocals) {

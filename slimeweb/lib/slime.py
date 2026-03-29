@@ -2,7 +2,9 @@
 # Email: abinix01@gmail.com
 
 import inspect
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, List, Literal, Tuple
+
+AVAILABLE_METHOD = ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]
 
 
 class Routes:
@@ -13,7 +15,8 @@ class Routes:
         stream: str | None = None,
         ws: bool = False,
     ) -> None:
-        if method.upper() not in ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]:
+        global AVAILABLE_METHOD
+        if method.upper() not in AVAILABLE_METHOD:
             raise ValueError(f"{method} is not Valid")
 
         self.path: str = path
@@ -53,16 +56,51 @@ class Slime:
         # => you can define multiple or same path with different request
         # like let saay user can assign  a path /name
         # with methods like GET,POST under /name
-        # => for each handler there can be only one method
         self.__routes: Dict[Routes, Dict[str, Tuple[Callable, bool] | None]] = {}
 
-    def middle_before(self, path: str = "/", method: str = "GET") -> Callable:
+    def __apply_middleware(
+        self,
+        path: str,
+        method: str,
+        handler: Callable,
+        is_async: bool,
+        middle_kind: Literal["before", "after"],
+    ):
+        found: bool = False
+        for route in self.__routes:
+            if (route.path == path and route.method == method) or (
+                method == "*" and route.path == path
+            ):
+                call_handler = self.__routes.get(route)
+                if call_handler is not None and call_handler["handler"] is not None:
+                    if call_handler["handler"][1] == is_async:
+                        if call_handler[middle_kind] is None:
+                            call_handler[middle_kind] = (
+                                handler,
+                                is_async,
+                            )
+                            found = True
+                            break
+                        else:
+                            error = f"Multiple middle before definition found for same Path: {path}, method: {method}"
+                            raise ValueError(error)
+                    else:
+                        error = f"Middle before handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
+                        raise ValueError(error)
+        if not found:
+            raise ValueError(
+                "You need to define the request handler to declare middleware"
+            )
+
+    def middle_before(
+        self, path: str = "/", method: List[str] | str = "GET"
+    ) -> Callable:
         def wrapper(middle_handler) -> Callable:
             if middle_handler is None or not callable(middle_handler):
                 raise ValueError(
                     f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
                 )
-            found: bool = False
+            # apply this middleware to all the available route or path
             if path == "*":
                 for route in self.__routes:
                     call_handler = self.__routes.get(route)
@@ -73,31 +111,34 @@ class Slime:
                         )
             else:
                 is_async = inspect.iscoroutinefunction(middle_handler)
-                for route in self.__routes:
-                    if route.path == path and route.method == method:
-                        call_handler = self.__routes.get(route)
-                        if (
-                            call_handler is not None
-                            and call_handler["handler"] is not None
-                        ):
-                            if call_handler["handler"][1] == is_async:
-                                if call_handler["before"] is None:
-                                    call_handler["before"] = (
-                                        middle_handler,
-                                        is_async,
-                                    )
-                                    found = True
-                                    break
-                                else:
-                                    error = f"Multiple middle before definition found for same Path: {path}, method: {method}"
-                                    raise ValueError(error)
-                            else:
-                                error = f"Middle before handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
-                                raise ValueError(error)
-                if not found:
-                    raise ValueError(
-                        "You need to define the request handler to declare middleware"
-                    )
+                if isinstance(method, list):
+                    for method_col in dict.fromkeys(method):
+                        self.__apply_middleware(
+                            handler=middle_handler,
+                            is_async=is_async,
+                            method=method_col,
+                            middle_kind="before",
+                            path=path,
+                        )
+                else:
+                    if method == "*":
+                        global AVAILABLE_METHOD
+                        for all_method in AVAILABLE_METHOD:
+                            self.__apply_middleware(
+                                handler=middle_handler,
+                                is_async=is_async,
+                                method=all_method,
+                                middle_kind="before",
+                                path=path,
+                            )
+                    else:
+                        self.__apply_middleware(
+                            handler=middle_handler,
+                            is_async=is_async,
+                            method=method,
+                            middle_kind="before",
+                            path=path,
+                        )
             return middle_handler
 
         return wrapper
@@ -108,8 +149,6 @@ class Slime:
                 raise ValueError(
                     f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
                 )
-
-            found: bool = False
             if path == "*":
                 for route in self.__routes:
                     call_handler = self.__routes.get(route)
@@ -120,39 +159,54 @@ class Slime:
                         )
             else:
                 is_async = inspect.iscoroutinefunction(middle_handler)
-                for route in self.__routes:
-                    if route.path == path and route.method == method:
-                        call_handler = self.__routes.get(route)
-                        if (
-                            call_handler is not None
-                            and call_handler["handler"] is not None
-                        ):
-                            if call_handler["handler"][1] == is_async:
-                                if call_handler["after"] is None:
-                                    call_handler["after"] = (
-                                        middle_handler,
-                                        is_async,
-                                    )
-                                    found = True
-                                    break
-                                else:
-                                    error = f"Multiple middle after definition found for same Path: {path}, method: {method}"
-                                    raise ValueError(error)
-                            else:
-                                error = f"Middle after handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
-                                raise ValueError(error)
-                if not found:
-                    raise ValueError(
-                        "You need to define the request handler to declare middleware"
-                    )
+                if isinstance(method, list):
+                    for method_col in dict.fromkeys(method):
+                        self.__apply_middleware(
+                            handler=middle_handler,
+                            is_async=is_async,
+                            method=method_col,
+                            middle_kind="after",
+                            path=path,
+                        )
+                else:
+                    if method == "*":
+                        global AVAILABLE_METHOD
+                        for all_method in AVAILABLE_METHOD:
+                            self.__apply_middleware(
+                                handler=middle_handler,
+                                is_async=is_async,
+                                method=all_method,
+                                middle_kind="after",
+                                path=path,
+                            )
+                    else:
+                        self.__apply_middleware(
+                            handler=middle_handler,
+                            is_async=is_async,
+                            method=method,
+                            middle_kind="after",
+                            path=path,
+                        )
             return middle_handler
 
         return wrapper
 
+    def __apply_route(
+        self, handler: Callable, path: str, method: str, stream: str | None, ws: bool
+    ):
+        self.__routes[Routes(path, method, stream, ws)] = {
+            "handler": (
+                handler,
+                inspect.iscoroutinefunction(handler),
+            ),
+            "before": None,
+            "after": None,
+        }
+
     def route(
         self,
         path: str = "/",
-        method: str = "GET",
+        method: str | List[str] = "GET",
         stream: str | None = None,
         ws: bool = False,
     ) -> Callable:
@@ -161,17 +215,43 @@ class Slime:
                 raise ValueError(
                     f"Route handler should be a function for [Path: {path}, Method: {method}]"
                 )
-            self.__routes[Routes(path, method, stream, ws)] = {
-                "handler": (route_handler, inspect.iscoroutinefunction(route_handler)),
-                "before": None,
-                "after": None,
-            }
+            if isinstance(method, list):
+                for method_col in dict.fromkeys(method):
+                    self.__apply_route(
+                        handler=route_handler,
+                        method=method_col,
+                        path=path,
+                        stream=stream,
+                        ws=ws,
+                    )
+            else:
+                if method == "*":
+                    global AVAILABLE_METHOD
+                    for all_method in AVAILABLE_METHOD:
+                        self.__apply_route(
+                            handler=route_handler,
+                            method=all_method,
+                            stream=stream,
+                            ws=ws,
+                            path=path,
+                        )
+                else:
+                    self.__apply_route(
+                        handler=route_handler,
+                        method=method,
+                        stream=stream,
+                        ws=ws,
+                        path=path,
+                    )
             return route_handler
 
         return wrapper
 
     def stream(
-        self, path: str = "/", method: str = "GET", content: str = "text/plain"
+        self,
+        path: str = "/",
+        method: List[str] | str = "GET",
+        content: str = "text/plain",
     ) -> Callable:
         def wrapper(stream_handler) -> Callable:
             if stream_handler is None or not callable(stream_handler):
@@ -182,14 +262,25 @@ class Slime:
                 raise ValueError(
                     f"Stream content type should be of type <String> with MIME for [Path: {path}, Method: {method}]"
                 )
-            self.__routes[Routes(path, method, stream=content)] = {
-                "handler": (
-                    stream_handler,
-                    inspect.iscoroutinefunction(stream_handler),
-                ),
-                "before": None,
-                "after": None,
-            }
+            if isinstance(method, list):
+                for method_col in dict.fromkeys(method):
+                    self.__routes[Routes(path, method_col, stream=content)] = {
+                        "handler": (
+                            stream_handler,
+                            inspect.iscoroutinefunction(stream_handler),
+                        ),
+                        "before": None,
+                        "after": None,
+                    }
+            else:
+                self.__routes[Routes(path, method, stream=content)] = {
+                    "handler": (
+                        stream_handler,
+                        inspect.iscoroutinefunction(stream_handler),
+                    ),
+                    "before": None,
+                    "after": None,
+                }
             return stream_handler
 
         return wrapper

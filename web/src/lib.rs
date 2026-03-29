@@ -62,11 +62,13 @@ mod web {
             .build()?;
 
         let runtime_handler = runtime.handle().clone();
-        let worker_txs = server::spawn_python_workers(worker_count, runtime_handler.clone());
+        let (worker_txs, pool) =
+            server::spawn_python_workers(worker_count, runtime_handler.clone());
         let mut server = SlimeServer::new(
             host,
             port,
             worker_txs,
+            pool,
             secret_key,
             slime_filename,
             is_dev,
