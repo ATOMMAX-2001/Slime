@@ -40,7 +40,7 @@ if __name__ == "__main__":
 
     script_path.write_text(code)
 
-    print("[*] Creating an env")
+    print("[*] Creating an env\n")
     if not (root / ".venv").exists():
         os.chdir(root)
         try:
@@ -92,7 +92,7 @@ def display_logo():
     print("   ___ \\| | | '_ ` _ \\ / _ \\ \\/  \\/ / _ \\ '_ \\ ")
     print("  ____) | | | | | | | |  __/\\  /\\  /  __/ |_) |")
     print(" |_____/|_|_|_| |_| |_|\\___| \\/  \\/ \\___|_.__/ ")
-    print("Version: 0.1.2\t\t\t Author: S.Abilash")
+    print("Version: 0.1.3\t\t\t Author: S.Abilash")
 
 
 def main():

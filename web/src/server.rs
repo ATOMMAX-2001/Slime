@@ -7,7 +7,7 @@ use axum::{
     },
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
-    routing::any,
+    routing::{MethodRouter, any},
 };
 
 use bytes::Bytes;
@@ -27,6 +27,7 @@ use std::sync::{
 use std::{io, net::SocketAddr};
 use tokio::{
     net::TcpListener,
+    process,
     runtime::Handle,
     signal,
     sync::{mpsc, oneshot},
@@ -293,268 +294,282 @@ impl SlimeServer {
             } else {
                 "http"
             };
-            server_router = server_router.route(
-                &path.to_owned(),
-                any(
-                    move |ConnectInfo(client): ConnectInfo<SocketAddr>,
-                          Path(params): Path<HashMap<String, String>>,
-                          State(app_state): State<WebSocketConnectionBook>,
-                          request: Request<Body>| {
-                        if is_dev {
-                            println!(
-                                "INFO: {} => {} {}",
-                                &method,
-                                &path,
-                                &client.ip().to_string()
-                            );
-                            template_engine =
-                                Arc::new(SlimeServer::get_template_environment(&filename));
-                        }
-                        async move {
-                            if request.method().as_str() != method {
-                                return StatusCode::METHOD_NOT_ALLOWED.into_response();
-                            }
-                            let idx = request_counter.fetch_add(1, Ordering::Relaxed);
-                            let worker_tx = &worker_txs[idx % worker_count];
+            let method_copy = method.to_owned();
+            let path_copy = path.to_owned();
+            let process_request = move |ConnectInfo(client): ConnectInfo<SocketAddr>,
+                                        Path(params): Path<HashMap<String, String>>,
+                                        State(app_state): State<WebSocketConnectionBook>,
+                                        request: Request<Body>| {
+                if is_dev {
+                    println!(
+                        "INFO: {} => {} {}",
+                        &method,
+                        &path,
+                        &client.ip().to_string()
+                    );
+                    template_engine = Arc::new(SlimeServer::get_template_environment(&filename));
+                }
+                async move {
+                    if request.method().as_str() != method {
+                        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+                    }
+                    let idx = request_counter.fetch_add(1, Ordering::Relaxed);
+                    let worker_tx = &worker_txs[idx % worker_count];
 
-                            let (resp_tx, resp_rx) = oneshot::channel();
-                            let (parts, raw_body) = request.into_parts();
-                            let mut parts_clone =None;
-                            if request_type =="ws"{
-                                parts_clone=Some(parts.clone());
-                            }
-                            let content_type = &parts
-                                .headers
-                                .get("content-type")
-                                .and_then(|value| value.to_str().ok())
-                                .unwrap_or("");
+                    let (resp_tx, resp_rx) = oneshot::channel();
+                    let (parts, raw_body) = request.into_parts();
+                    let mut parts_clone = None;
+                    if request_type == "ws" {
+                        parts_clone = Some(parts.clone());
+                    }
+                    let content_type = &parts
+                        .headers
+                        .get("content-type")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or("");
 
-                            let body = match to_bytes(raw_body, 1024 * 1024 * 10).await {
-                                Ok(bod) => bod,
-                                Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-                            };
-                            let mut json_body: Option<serde_json::Value> = None;
-                            let mut form_body: Option<HashMap<String, String>> = None;
-                            let mut file_body: Option<Vec<SlimeFile>> = None;
-                            if content_type != &"" {
-                                if content_type.starts_with("application/json") {
-                                    json_body =
-                                        serde_json::from_slice::<serde_json::Value>(&body).ok();
-                                } else if content_type
-                                    .starts_with("application/x-www-form-urlencoded")
+                    let body = match to_bytes(raw_body, 1024 * 1024 * 10).await {
+                        Ok(bod) => bod,
+                        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+                    };
+                    let mut json_body: Option<serde_json::Value> = None;
+                    let mut form_body: Option<HashMap<String, String>> = None;
+                    let mut file_body: Option<Vec<SlimeFile>> = None;
+                    if content_type != &"" {
+                        if content_type.starts_with("application/json") {
+                            json_body = serde_json::from_slice::<serde_json::Value>(&body).ok();
+                        } else if content_type.starts_with("application/x-www-form-urlencoded") {
+                            form_body =
+                                serde_urlencoded::from_bytes::<HashMap<String, String>>(&body).ok();
+                        } else if content_type.starts_with("multipart/form-data") {
+                            if let Ok(boundary) = multer::parse_boundary(content_type) {
+                                let body_clone = body.clone();
+                                let stream = futures_util::stream::once(async move {
+                                    Ok::<_, std::io::Error>(body_clone)
+                                });
+
+                                let mut multipart = multer::Multipart::new(stream, boundary);
+
+                                let mut text_fields = HashMap::new();
+                                let mut files = Vec::with_capacity(2);
+                                while let Some(mut field) =
+                                    multipart.next_field().await.unwrap_or(None)
                                 {
-                                    form_body = serde_urlencoded::from_bytes::<
-                                        HashMap<String, String>,
-                                    >(&body)
-                                    .ok();
-                                } else if content_type.starts_with("multipart/form-data") {
-                                    if let Ok(boundary) = multer::parse_boundary(content_type) {
-                                        let body_clone = body.clone();
-                                        let stream = futures_util::stream::once(async move {
-                                            Ok::<_, std::io::Error>(body_clone)
-                                        });
+                                    let name = field.name().map(|s| s.to_string());
 
-                                        let mut multipart =
-                                            multer::Multipart::new(stream, boundary);
+                                    if field.file_name().is_none() {
+                                        if let (Some(name), Ok(text)) = (name, field.text().await) {
+                                            text_fields.insert(name, text);
+                                        }
+                                    } else {
+                                        // file uploads
 
-                                        let mut text_fields = HashMap::new();
-                                        let mut files = Vec::with_capacity(2);
-                                        while let Some(mut field) =
-                                            multipart.next_field().await.unwrap_or(None)
+                                        let content_type =
+                                            field.content_type().map(|value| value.to_string());
+                                        let filename =
+                                            format!("slime_file_{}", uuid::Uuid::new_v4());
+                                        let temp_path = std::env::temp_dir().join(&filename);
+                                        if let Ok(mut file) =
+                                            tokio::fs::File::create(&temp_path).await
                                         {
-                                            let name = field.name().map(|s| s.to_string());
-
-                                            if field.file_name().is_none() {
-                                                if let (Some(name), Ok(text)) =
-                                                    (name, field.text().await)
+                                            let mut size = 0;
+                                            while let Ok(Some(chunk)) = field.chunk().await {
+                                                size += chunk.len();
+                                                if let Err(err) =
+                                                    tokio::io::AsyncWriteExt::write_all(
+                                                        &mut file, &chunk,
+                                                    )
+                                                    .await
                                                 {
-                                                    text_fields.insert(name, text);
-                                                }
-                                            } else {
-                                                // file uploads
-
-                                                let content_type = field
-                                                    .content_type()
-                                                    .map(|value| value.to_string());
-                                                let filename =
-                                                    format!("slime_file_{}", uuid::Uuid::new_v4());
-                                                let temp_path =
-                                                    std::env::temp_dir().join(&filename);
-                                                if let Ok(mut file) =
-                                                    tokio::fs::File::create(&temp_path).await
-                                                {
-                                                    let mut size = 0;
-                                                    while let Ok(Some(chunk)) = field.chunk().await
-                                                    {
-                                                        size += chunk.len();
-                                                        if let Err(err) =
-                                                            tokio::io::AsyncWriteExt::write_all(
-                                                                &mut file, &chunk,
-                                                            )
-                                                            .await
-                                                        {
-                                                            pyo3::exceptions::PyException::new_err(
-                                                                err.to_string(),
-                                                            );
-                                                        }
-                                                    }
-                                                    let file_content_type = content_type
-                                                        .unwrap_or("UNKNOWN".to_string());
-                                                    let extension: String = file_content_type
-                                                        .split("/")
-                                                        .last()
-                                                        .unwrap_or("UNKNOWN")
-                                                        .to_string();
-                                                    files.push(SlimeFile {
-                                                        filename: filename,
-                                                        content_type: file_content_type,
-                                                        temp_path: temp_path,
-                                                        extension: extension,
-                                                        size: size,
-                                                    });
-                                                } else {
                                                     pyo3::exceptions::PyException::new_err(
-                                                        "Failed to create file",
+                                                        err.to_string(),
                                                     );
                                                 }
                                             }
+                                            let file_content_type =
+                                                content_type.unwrap_or("UNKNOWN".to_string());
+                                            let extension: String = file_content_type
+                                                .split("/")
+                                                .last()
+                                                .unwrap_or("UNKNOWN")
+                                                .to_string();
+                                            files.push(SlimeFile {
+                                                filename: filename,
+                                                content_type: file_content_type,
+                                                temp_path: temp_path,
+                                                extension: extension,
+                                                size: size,
+                                            });
+                                        } else {
+                                            pyo3::exceptions::PyException::new_err(
+                                                "Failed to create file",
+                                            );
                                         }
-                                        file_body = Some(files);
-                                        form_body = Some(text_fields);
                                     }
                                 }
-                            }
-
-                            let query_params: HashMap<String, String> =
-                                serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
-                                    .unwrap_or_default();
-                            let slime_request = SlimeRequest {
-                                uri: parts.uri,
-                                client: client.ip(),
-                                method: parts.method,
-                                header: Arc::new(parts.headers),
-                                body: body,
-                                secret: secret_key,
-                                template: template_engine,
-                                query: query_params,
-                                json_body: json_body,
-                                form: form_body,
-                                files: file_body,
-                                params: params,
-                                states: slime_app_state
-                            };
-
-                            // send request to python workers
-
-                            match request_type{
-                                "ws" => {
-                                    if let Ok(ws) = WebSocketUpgrade::from_request(Request::from_parts(parts_clone.unwrap(), Body::empty()),&app_state).await{
-                                        return websocket_handler(ws,app_state,tokio_runtime.clone(),worker_tx.clone(),slime_request,handler,event_loop_task_local).await.into_response();
-                                    }
-
-                                },
-                                "stream" => {
-                                    let stream_content_type = stream_content.unwrap();
-                                    let (stream_tx, stream_rx) =
-                                        mpsc::channel::<Result<Bytes, io::Error>>(100);
-                                    let (started_tx, mut started_rx) =
-                                        mpsc::channel::<HashMap<String, String>>(1);
-                                    let new_slime_stream_resonse = SlimeStreamResponse::new(
-                                        stream_content_type.to_owned(),
-                                        stream_tx,
-                                        tokio_runtime.clone(),
-                                        started_tx,
-                                    );
-                                    if handler[0].1{
-                                        handle_async_python_call(PyRequestWorker::Stream(PyRequestStream {
-                                            handler,
-                                            request: slime_request,
-                                            response: new_slime_stream_resonse,
-                                        }), event_loop_task_local).await;
-                                    }else{
-
-
-                                        if let Err(err) = worker_tx
-                                            .send(PyRequestWorker::Stream(PyRequestStream {
-                                                handler,
-                                                request: slime_request,
-                                                response: new_slime_stream_resonse,
-                                            }))
-                                            .await
-                                        {
-                                            return (
-                                                StatusCode::INTERNAL_SERVER_ERROR,
-                                                format!(
-                                                    "Worker cant able to handle the request (reason) => {}",
-                                                    err.to_string()
-                                                ),
-                                            )
-                                                .into_response();
-                                        }
-                                    }
-                                    if let Some(headers) = started_rx.recv().await {
-                                        let mut new_response = Response::builder()
-                                            .header("content-type", stream_content_type)
-                                            .header("Server", SERVER);
-                                        for (key, value) in headers {
-                                            new_response = new_response.header(key, value);
-                                        }
-                                        drop(started_rx);
-                                        let stream = ReceiverStream::new(stream_rx);
-                                        let body = Body::from_stream(stream);
-                                        return new_response.body(body).unwrap();
-                                    }
-
-                                },
-                                "http" => {
-                                    if handler[0].1{
-                                        handle_async_python_call(PyRequestWorker::Http(PyRequest {
-                                            handler,
-                                            request: slime_request,
-                                            response: resp_tx,
-                                        }), event_loop_task_local).await;
-                                    }else{
-                                        if let Err(err) = worker_tx
-                                            .send(PyRequestWorker::Http(PyRequest {
-                                                handler,
-                                                request: slime_request,
-                                                response: resp_tx,
-                                            }))
-                                            .await
-                                        {
-                                            return (
-                                                StatusCode::INTERNAL_SERVER_ERROR,
-                                                format!("Worker down cant able to handle the request (reason) => {}",err.to_string()),
-                                            )
-                                                .into_response();
-                                        }
-                                    }
-
-                                },
-                                _ => {return (StatusCode::BAD_REQUEST,"Unknown request".to_string()).into_response()}
-
-                            }
-
-
-                            // to client side response
-                            match resp_rx.await {
-                                Ok(Ok(result)) => {
-                                    return result._into_response();
-                                }
-                                Ok(Err(err)) => {
-                                    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
-                                        .into_response()
-                                }
-                                Err(_) => (
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    "Worker cant able to handle the response".to_string(),
-                                )
-                                    .into_response(),
+                                file_body = Some(files);
+                                form_body = Some(text_fields);
                             }
                         }
-                    },
-                ),
-            );
+                    }
+
+                    let query_params: HashMap<String, String> =
+                        serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
+                            .unwrap_or_default();
+                    let slime_request = SlimeRequest {
+                        uri: parts.uri,
+                        client: client.ip(),
+                        method: parts.method,
+                        header: Arc::new(parts.headers),
+                        body: body,
+                        secret: secret_key,
+                        template: template_engine,
+                        query: query_params,
+                        json_body: json_body,
+                        form: form_body,
+                        files: file_body,
+                        params: params,
+                        states: slime_app_state,
+                    };
+
+                    // send request to python workers
+
+                    match request_type {
+                        "ws" => {
+                            if let Ok(ws) = WebSocketUpgrade::from_request(
+                                Request::from_parts(parts_clone.unwrap(), Body::empty()),
+                                &app_state,
+                            )
+                            .await
+                            {
+                                return websocket_handler(
+                                    ws,
+                                    app_state,
+                                    tokio_runtime.clone(),
+                                    worker_tx.clone(),
+                                    slime_request,
+                                    handler,
+                                    event_loop_task_local,
+                                )
+                                .await
+                                .into_response();
+                            }
+                        }
+                        "stream" => {
+                            let stream_content_type = stream_content.unwrap();
+                            let (stream_tx, stream_rx) =
+                                mpsc::channel::<Result<Bytes, io::Error>>(100);
+                            let (started_tx, mut started_rx) =
+                                mpsc::channel::<HashMap<String, String>>(1);
+                            let new_slime_stream_resonse = SlimeStreamResponse::new(
+                                stream_content_type.to_owned(),
+                                stream_tx,
+                                tokio_runtime.clone(),
+                                started_tx,
+                            );
+                            if handler[0].1 {
+                                handle_async_python_call(
+                                    PyRequestWorker::Stream(PyRequestStream {
+                                        handler,
+                                        request: slime_request,
+                                        response: new_slime_stream_resonse,
+                                    }),
+                                    event_loop_task_local,
+                                )
+                                .await;
+                            } else {
+                                if let Err(err) = worker_tx
+                                    .send(PyRequestWorker::Stream(PyRequestStream {
+                                        handler,
+                                        request: slime_request,
+                                        response: new_slime_stream_resonse,
+                                    }))
+                                    .await
+                                {
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        format!(
+                                            "Worker cant able to handle the request (reason) => {}",
+                                            err.to_string()
+                                        ),
+                                    )
+                                        .into_response();
+                                }
+                            }
+                            if let Some(headers) = started_rx.recv().await {
+                                let mut new_response = Response::builder()
+                                    .header("content-type", stream_content_type)
+                                    .header("Server", SERVER);
+                                for (key, value) in headers {
+                                    new_response = new_response.header(key, value);
+                                }
+                                drop(started_rx);
+                                let stream = ReceiverStream::new(stream_rx);
+                                let body = Body::from_stream(stream);
+                                return new_response.body(body).unwrap();
+                            }
+                        }
+                        "http" => {
+                            if handler[0].1 {
+                                handle_async_python_call(
+                                    PyRequestWorker::Http(PyRequest {
+                                        handler,
+                                        request: slime_request,
+                                        response: resp_tx,
+                                    }),
+                                    event_loop_task_local,
+                                )
+                                .await;
+                            } else {
+                                if let Err(err) = worker_tx
+                                    .send(PyRequestWorker::Http(PyRequest {
+                                        handler,
+                                        request: slime_request,
+                                        response: resp_tx,
+                                    }))
+                                    .await
+                                {
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        format!("Worker down cant able to handle the request (reason) => {}",err.to_string()),
+                                    )
+                                        .into_response();
+                                }
+                            }
+                        }
+                        _ => {
+                            return (StatusCode::BAD_REQUEST, "Unknown request".to_string())
+                                .into_response();
+                        }
+                    }
+
+                    // to client side response
+                    match resp_rx.await {
+                        Ok(Ok(result)) => {
+                            return result._into_response();
+                        }
+                        Ok(Err(err)) => {
+                            (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
+                        }
+                        Err(_) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "Worker cant able to handle the response".to_string(),
+                        )
+                            .into_response(),
+                    }
+                }
+            };
+            let mut method_router = MethodRouter::new();
+            method_router = match method_copy.as_str() {
+                "GET" => method_router.get(process_request),
+                "POST" => method_router.post(process_request),
+                "PUT" => method_router.put(process_request),
+                "PATCH" => method_router.patch(process_request),
+                "DELETE" => method_router.delete(process_request),
+                "OPTIONS" => method_router.options(process_request),
+                _ => method_router,
+            };
+            server_router = server_router.route(&path_copy, method_router)
         }
         return server_router;
     }
@@ -564,7 +579,7 @@ impl SlimeServer {
         let server_router = self.set_server_routes();
         let listener = TcpListener::bind(address).await?;
 
-        println!("Slime server is running at {}", address);
+        println!("Slime server is running at http://{}", address);
         let _ = axum::serve(
             listener,
             server_router

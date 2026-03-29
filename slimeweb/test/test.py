@@ -26,6 +26,12 @@ def land_plain(req, resp):
     return resp.plain("hello world")
 
 
+@app.route(path="/plain", method="POST")
+def land_plain_post(req, resp):
+    print(req.body)
+    return resp.plain("hello world from post")
+
+
 @app.route(path="/json", method="GET")
 def land_json(req, resp):
     return resp.json({"name": "abilash", "slimeversion": "V0.1.3"})
