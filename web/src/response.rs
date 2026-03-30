@@ -250,15 +250,15 @@ impl SlimeResponse {
         return Ok(());
     }
 
+    fn set_status(&mut self, status: u16) -> PyResult<()> {
+        self.status = status;
+        return Ok(());
+    }
+
     #[pyo3(signature = (resp_obj,status=200))]
     fn plain(&mut self, resp_obj: String, status: u16) -> PyResult<()> {
         self.status = status;
         self.body = Some(resp_obj);
-        return Ok(());
-    }
-
-    fn set_status(&mut self, status: u16) -> PyResult<()> {
-        self.status = status;
         return Ok(());
     }
 
