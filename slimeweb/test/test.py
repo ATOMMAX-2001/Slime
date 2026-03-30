@@ -5,6 +5,14 @@ from lib import slime
 app = slime.Slime(__file__)
 
 
+class SampleMiddle:
+    def middle_before(self, req, resp):
+        resp.set_header("plugin_before", "works")
+
+    def middle_after(self, req, resp):
+        resp.set_header("plugin_after", "works")
+
+
 @app.websocket(path="/chat", method="GET")
 async def chatty(req, resp):
     await asyncio.sleep(1)
@@ -99,4 +107,6 @@ def hello(req, resp):
 
 
 if __name__ == "__main__":
+    app.use(SampleMiddle, method=["GET", "POST"])
+
     app.serve(app_state={"counter": 0})

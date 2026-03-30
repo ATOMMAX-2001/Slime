@@ -3,7 +3,7 @@
 
 import inspect
 from enum import Enum
-from typing import Any, Callable, Dict, List, Literal, Tuple
+from typing import Any, Callable, Dict, List, Literal, Tuple, Type
 
 from .errors import (
     InvalidHandler,
@@ -62,15 +62,6 @@ class Routes:
             {f"Compression: {self.compression}" if self.compression is not None else ""}
         """
 
-    def __repr__(self) -> str:
-        return f"""
-            Path: {self.path}
-            Method: {self.method}
-            {f"Stream: {self.stream}" if self.stream is not None else "False"}
-            {f"Websocket: {self.ws}" if self.ws is not None else "False"}
-            {f"Compression: {self.compression}" if self.compression is not None else "No Compression"}
-        """
-
 
 class Slime:
     def __init__(self, filename: str) -> None:
@@ -83,7 +74,7 @@ class Slime:
         # => you can define multiple or same path with different request
         # like let saay user can assign  a path /name
         # with methods like GET,POST under /name
-        self.__routes: Dict[Routes, Dict[str, Tuple[Callable, bool] | None]] = {}
+        self.__routes: Dict[Routes, Dict[str, List[Tuple[Callable, bool]] | None]] = {}
 
     def __apply_middleware(
         self,
@@ -102,17 +93,19 @@ class Slime:
                 if call_handler is not None and call_handler["handler"] is not None:
                     if call_handler["handler"][1] == is_async:
                         if call_handler[middle_kind] is None:
-                            call_handler[middle_kind] = (
-                                handler,
-                                is_async,
-                            )
+                            call_handler[middle_kind] = [
+                                (
+                                    handler,
+                                    is_async,
+                                )
+                            ]
                             found = True
                             break
                         else:
-                            error = f"Multiple middle before definition found for same Path: {path}, method: {method}"
+                            error = f"Multiple middle {middle_kind} definition found for same Path: {path}, method: {method}"
                             raise MultipleMiddlewareException(error)
                     else:
-                        error = f"Middle before handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
+                        error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
                         raise InvalidMiddlewareHandlerType(error)
         if not found:
             raise RouteHandlerNotFoundException(
@@ -170,7 +163,9 @@ class Slime:
 
         return wrapper
 
-    def middle_after(self, path: str = "/", method: str = "GET") -> Callable:
+    def middle_after(
+        self, path: str = "/", method: List[str] | str = "GET"
+    ) -> Callable:
         def wrapper(middle_handler) -> Callable:
             if middle_handler is None or not callable(middle_handler):
                 raise InvalidHandler(
@@ -349,6 +344,33 @@ class Slime:
 
     def _get_routes(self) -> Dict[Routes, Dict[str, Tuple[Callable, bool] | None]]:
         return self.__routes
+
+    def use(self, obj: Type, method: List[str] | str = "GET", path="*") -> None:
+        if not isinstance(obj, type):
+            raise InvalidMiddlewareHandlerType(
+                'SlimePlugin has to be type class with "middle_before" or "middle_after" method'
+            )
+
+        plugin_instance = obj()
+        found: bool = False
+        if hasattr(plugin_instance, "middle_before"):
+            found = True
+
+            @self.middle_before(path=path, method=method)
+            def before_plugin_handler(req, resp):
+                plugin_instance.middle_before(req, resp)
+
+        if hasattr(plugin_instance, "middle_after"):
+            found = True
+
+            @self.middle_after(path=path, method=method)
+            def afte_plugin_handler(req, resp):
+                plugin_instance.middle_after(req, resp)
+
+        if not found:
+            raise InvalidMiddlewareHandlerType(
+                "SlimePlugin class should have atleast one method middle_before or middle_after"
+            )
 
     def serve(
         self,
