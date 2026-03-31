@@ -47,6 +47,7 @@ Hello World from slime
 - Static serving
 - Hot reload of templates in dev mode
 - WebSocket
+- Compression
 
 ---
 
@@ -103,13 +104,22 @@ Route method contains
 - method ('GET' as default)
 - stream (content-type)
 - ws     (create websocket for this path)
+- compression (SlimeCompression.NoCompression as default)
 
-**NOTE:** You can set only one path and method at a same time, For multiple method for same path you need to create different handler.
+**NOTE:** You can define only one handler per unique route-method combination, defining multiple handlers for the same path and method will raise an error.
+
+
 
 ```python
-@app.route(path="/", method="GET")
+@app.route(path="/", method=["GET","POST"])
 def index(req, resp):
-    return resp.plain("Hello from Slime")
+    if req.method == "GET":
+        return resp.plain("Hello from Slime")
+    else:
+        return resp.json({
+            "status": "ok",
+            "message": "Hello from Slime"
+        })
 ```
 
 Handlers in slimeweb can be written as either regular synchronous functions or asynchronous ones. Async handlers run using Python's asyncio event loop for efficient, non-blocking execution.
@@ -189,6 +199,23 @@ def hello(req, resp):
     return resp.json({"status": "ok"})
 
 ```
+
+
+### Compression
+
+Slime supports response body compression to reduce payload size and improve performance.
+
+```python
+from slimeweb import SlimeCompression
+@app.route(path="/",method="GET",compression=SlimeCompression.Gzip)
+def land(req,resp):
+    resp.plain("hello" * 5000)
+```
+
+In this example, Gzip compression is enabled for the route. If the client requested for compression, Slime will automatically compress the response body before sending it. Refer **Api** for types of compression available.
+
+
+**NOTE:** Compression body has a threshold slime will compress the body if the content size is above the threshold, to prevent  unnecessary CPU cycle.
 
 
 ### Template Render
@@ -361,9 +388,11 @@ def chatty(req, resp):
   resp.set_cookie(key: str,value: str) -> None
   resp.set_sign_cookie(key:str,value: str,secret: str) -> None
   resp.set_header(key: str,value: str) -> None
-  resp.plain(data: str)
-  resp.json(data: any) # any Pyobject which we can serialize
-  resp.html(data: str)
+  resp.set_status(status_id: int) -> None
+  # Here status is optional parameter 
+  resp.plain(data: str,status=200)
+  resp.json(data: any,status=200) # any Pyobject which we can serialize
+  resp.html(data: str,status=200)
   
 ```
 
@@ -406,6 +435,17 @@ def chatty(req, resp):
 ```
 
 
+### SlimeCompression
+```python
+from slimeweb import SlimeCompression #Enum
+
+    SlimeCompression.NoCompression  (default)
+    SlimeCompression.Gzip
+    SlimeCompression.Brotli
+    SlimeCompression.Zstd
+
+```
+
 ### Benchmark
 [BenchMark Code with slime example:](https://github.com/Abilash2001/SlimeWeb/)
 
@@ -417,4 +457,4 @@ def chatty(req, resp):
 This project is licensed under the terms of **MIT** license
 
 
-Thank You & enjoy using SlimeWeb ❤️
+Thank you & enjoy using SlimeWeb ❤️ ~ Abilash Suresh
