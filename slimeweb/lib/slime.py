@@ -9,7 +9,6 @@ from .errors import (
     InvalidHandler,
     InvalidMiddlewareHandlerType,
     MethodException,
-    MultipleMiddlewareException,
     MultipleRouteException,
     RouteHandlerNotFoundException,
 )
@@ -86,31 +85,54 @@ class Slime:
     ):
         found: bool = False
         for route in self.__routes:
-            if (route.path == path and route.method == method) or (
-                method == "*" and route.path == path
-            ):
-                call_handler = self.__routes.get(route)
-                if call_handler is not None and call_handler["handler"] is not None:
-                    if call_handler["handler"][1] == is_async:
-                        if call_handler[middle_kind] is None:
-                            call_handler[middle_kind] = [
-                                (
-                                    handler,
-                                    is_async,
-                                )
-                            ]
-                            found = True
-                            break
+            if route.path == path and route.method == method:
+                found = True
+                call_handler = self.__routes[route]
+                if call_handler["handler"] is not None:
+                    if call_handler["handler"][0][1] == is_async:
+                        result = call_handler[middle_kind]
+                        if result is None:
+                            call_handler[middle_kind] = [(handler, is_async)]
                         else:
-                            error = f"Multiple middle {middle_kind} definition found for same Path: {path}, method: {method}"
-                            raise MultipleMiddlewareException(error)
+                            result.append((handler, is_async))
+                        break
                     else:
                         error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
                         raise InvalidMiddlewareHandlerType(error)
+
         if not found:
             raise RouteHandlerNotFoundException(
                 "You need to define the request handler to declare middleware"
             )
+
+        # found: bool = False
+        # for route in self.__routes:
+        #     if (route.path == path and route.method == method) or (
+        #         method == "*" and route.path == path
+        #     ):
+        #         call_handler = self.__routes.get(route)
+        #         if call_handler is not None and call_handler["handler"] is not None:
+        #             if call_handler["handler"][1] == is_async:
+        #                 if call_handler[middle_kind] is None:
+        #                     call_handler[middle_kind] = [
+        #                         (
+        #                             handler,
+        #                             is_async,
+        #                         )
+        #                     ]
+        #                     found = True
+        #                     break
+        #                 else:
+        #                     call_handler[middle_kind].append((handler, is_async))
+        #                     found = True
+        #                     break
+        #             else:
+        #                 error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
+        #                 raise InvalidMiddlewareHandlerType(error)
+        # if not found:
+        #     raise RouteHandlerNotFoundException(
+        #         "You need to define the request handler to declare middleware"
+        #     )
 
     def middle_before(
         self, path: str = "/", method: List[str] | str = "GET"
@@ -125,10 +147,20 @@ class Slime:
                 for route in self.__routes:
                     call_handler = self.__routes.get(route)
                     if call_handler is not None:
-                        call_handler["before"] = (
-                            middle_handler,
-                            inspect.iscoroutinefunction(middle_handler),
-                        )
+                        if call_handler["before"] is None:
+                            call_handler["before"] = [
+                                (
+                                    middle_handler,
+                                    inspect.iscoroutinefunction(middle_handler),
+                                )
+                            ]
+                        else:
+                            call_handler["before"].append(
+                                (
+                                    middle_handler,
+                                    inspect.iscoroutinefunction(middle_handler),
+                                )
+                            )
             else:
                 is_async = inspect.iscoroutinefunction(middle_handler)
                 if isinstance(method, list):
@@ -175,10 +207,20 @@ class Slime:
                 for route in self.__routes:
                     call_handler = self.__routes.get(route)
                     if call_handler is not None:
-                        call_handler["after"] = (
-                            middle_handler,
-                            inspect.iscoroutinefunction(middle_handler),
-                        )
+                        if call_handler["after"] is None:
+                            call_handler["after"] = [
+                                (
+                                    middle_handler,
+                                    inspect.iscoroutinefunction(middle_handler),
+                                )
+                            ]
+                        else:
+                            call_handler["after"].append(
+                                (
+                                    middle_handler,
+                                    inspect.iscoroutinefunction(middle_handler),
+                                )
+                            )
             else:
                 is_async = inspect.iscoroutinefunction(middle_handler)
                 if isinstance(method, list):
@@ -226,10 +268,12 @@ class Slime:
 
         if new_route not in self.__routes:
             self.__routes[new_route] = {
-                "handler": (
-                    handler,
-                    inspect.iscoroutinefunction(handler),
-                ),
+                "handler": [
+                    (
+                        handler,
+                        inspect.iscoroutinefunction(handler),
+                    )
+                ],
                 "before": None,
                 "after": None,
             }
@@ -291,6 +335,7 @@ class Slime:
         path: str = "/",
         method: List[str] | str = "GET",
         content: str = "text/plain",
+        compression: SlimeCompression = SlimeCompression.NoCompression,
     ) -> Callable:
         def wrapper(stream_handler) -> Callable:
             if stream_handler is None or not callable(stream_handler):
@@ -303,23 +348,23 @@ class Slime:
                 )
             if isinstance(method, list):
                 for method_col in dict.fromkeys(method):
-                    self.__routes[Routes(path, method_col, stream=content)] = {
-                        "handler": (
-                            stream_handler,
-                            inspect.iscoroutinefunction(stream_handler),
-                        ),
-                        "before": None,
-                        "after": None,
-                    }
+                    self.__apply_route(
+                        compression=compression,
+                        handler=stream_handler,
+                        method=method_col,
+                        path=path,
+                        stream=content,
+                        ws=False,
+                    )
             else:
-                self.__routes[Routes(path, method, stream=content)] = {
-                    "handler": (
-                        stream_handler,
-                        inspect.iscoroutinefunction(stream_handler),
-                    ),
-                    "before": None,
-                    "after": None,
-                }
+                self.__apply_route(
+                    compression=compression,
+                    handler=stream_handler,
+                    method=method,
+                    path=path,
+                    stream=content,
+                    ws=False,
+                )
             return stream_handler
 
         return wrapper
@@ -330,19 +375,21 @@ class Slime:
                 raise InvalidHandler(
                     f"Websocket handler should be a function for [Path: {path}, Method: {method}]"
                 )
-            self.__routes[Routes(path, method, stream=None, ws=True)] = {
-                "handler": (
-                    websocket_handler,
-                    inspect.iscoroutinefunction(websocket_handler),
-                ),
-                "before": None,
-                "after": None,
-            }
+            self.__apply_route(
+                compression=SlimeCompression.NoCompression,
+                handler=websocket_handler,
+                method=method,
+                path=path,
+                stream=None,
+                ws=True,
+            )
             return websocket_handler
 
         return wrapper
 
-    def _get_routes(self) -> Dict[Routes, Dict[str, Tuple[Callable, bool] | None]]:
+    def _get_routes(
+        self,
+    ) -> Dict[Routes, Dict[str, List[Tuple[Callable, bool]] | None]]:
         return self.__routes
 
     def use(self, obj: Type, method: List[str] | str = "GET", path="*") -> None:
@@ -364,7 +411,7 @@ class Slime:
             found = True
 
             @self.middle_after(path=path, method=method)
-            def afte_plugin_handler(req, resp):
+            def after_plugin_handler(req, resp):
                 plugin_instance.middle_after(req, resp)
 
         if not found:

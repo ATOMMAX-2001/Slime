@@ -3,7 +3,9 @@ from lib.slime import Slime, SlimeCompression
 app = Slime(__file__)
 
 
-@app.route("/", method="*")
+@app.route(
+    "/",
+)
 def land(req, resp):
     print(req.header)
     if req.method == "GET":
@@ -12,5 +14,12 @@ def land(req, resp):
         resp.json({"status": "ok"})
 
 
+@app.middle_before(path="/", method="GET")
+def land_mb(req, resp):
+    print("Middle Before working", flush=True)
+
+
 if __name__ == "__main__":
-    app.serve(dev=True)
+    for route in app._get_routes():
+        print(route)
+    # app.serve(dev=True)
