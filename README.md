@@ -48,12 +48,15 @@ Hello World from slime
 - Hot reload of templates in dev mode
 - WebSocket
 - Compression
+- Middleware Plugin
+
 
 ---
 
 
 ## Project Structure
-Project are created and init by uv after
+Project are created and init by uv after using below command, by default it runs in python no-gil mode, for max performance.
+
 ```bash
 slime new ProjectName
 ``` 
@@ -77,6 +80,8 @@ root/
 
 ## Getting Started
 
+Use the below code to create simple GET request in dev environment
+
 ```python
 
 from slimeweb import Slime
@@ -94,6 +99,15 @@ if __name__ == "__main__":
 
 
 
+### Slime Cli
+
+```bash
+    slime new projectName   -> Create new project
+    slime run main          -> Run slime without GIL
+    slime rung main         -> Run slime with GIL
+    slime add packageName   -> Add lib to the project uses 
+    slime use python3.12    -> Change the python runtime
+ ```
 
 
 ## Basic Application
@@ -106,7 +120,7 @@ Route method contains
 - ws     (create websocket for this path)
 - compression (SlimeCompression.NoCompression as default)
 
-**NOTE:** You can define only one handler per unique route-method combination, defining multiple handlers for the same path and method will raise an error.
+> **NOTE:** You can define only one handler per unique route-method combination, defining multiple handlers for the same path and method will raise an error.
 
 
 
@@ -184,7 +198,7 @@ def hello(req, resp):
 
 In your Slime file handler, access uploaded files via the **req.file** attribute, it returns a list of **SlimeFile** objects (Refer below for SlimeFile **api**).
 
-**Note**: For security, Slime automatically strips the original file extension and assigns a unique filename to each uploaded file.
+> **Note**: For security, Slime automatically strips the original file extension and assigns a unique filename to each uploaded file.
 
 ```python
 @app.route(path="/test", method="POST")
@@ -215,7 +229,32 @@ def land(req,resp):
 In this example, Gzip compression is enabled for the route. If the client requested for compression, Slime will automatically compress the response body before sending it. Refer **Api** for types of compression available.
 
 
-**NOTE:** Compression body has a threshold slime will compress the body if the content size is above the threshold, to prevent  unnecessary CPU cycle.
+> **NOTE:** Compression body has a threshold slime will compress the body if the content size is above the threshold, to prevent  unnecessary CPU cycle.
+
+
+
+### Middleware Plugin
+ 
+Slime lets you create custom middleware plugins with the **use()** method. Define a plugin class with **middle_after** and **middle_before** methods. Both the mesthod should accept two argument SlimeRequest and SlimeResponse.
+
+```python
+class SimpleMiddle:
+    def middle_after(self, req, resp):
+        resp.set_header("PluginAfter","CustomPlugin")
+    def middle_before(self, req, resp):
+        resp.set_header("PluginBefore","CustomPlugin")
+        
+        
+if __name__ == "__main__":
+    app.use(SimpleMiddle)
+    # or 
+    app.use(SimpleMiddle,method=["POST","GET"],path="/home")
+
+```
+
+This example builds a custom middleware plugin named SimpleMiddle with both middle_after and middle_before methods. To apply the plugin, we are using **use()** method, which targets all routes and HTTP methods by default. We can limit the scope of the plugin by specifying the route and the path.
+
+> **NOTE:** Plugin **use()** should be used after declaring the routes, otherwise error will be raised.
 
 
 ### Template Render
@@ -276,7 +315,7 @@ Within each handler, the current app state is automatically injected into the **
 - **req.get_state(key)**, To retrieve the current value for a given key.
 - **req.update_state(key,value)**, To update the value for a given key.
 
-**NOTE:** SlimeState is not atomic. In concurrent scenario with multiple simultaneous request, race condition may occur during state updates, Potentially leading to incorrect values. For production when working with high concurrency, consider implementing your own synchronization or use external state store.
+> **NOTE:** SlimeState is not atomic. In concurrent scenario with multiple simultaneous request, race condition may occur during state updates, Potentially leading to incorrect values. For production when working with high concurrency, consider implementing your own synchronization or use external state store.
 
 ### Middleware
 
@@ -298,7 +337,7 @@ def land_after(req, resp):
 
 ```
 
-**NOTE:** Middleware handlers must match the **route handler's type**. If your route handler is asynchronous, the middleware must also be async (and vice versa for sync).
+> **NOTE:** Middleware handlers must match the **route handler's type**. If your route handler is asynchronous, the middleware must also be async (and vice versa for sync).
 
 ### Streaming
 
@@ -307,7 +346,7 @@ You can add any headers to the response before calling **start_stream()**. Once 
 Use **send()** to stream data chunks and slime automatically serializes them before sending. 
 Call **close()** when done to end the connection.
 
-**NOTE:** Updating headers after start_stream() will cause an error.
+> **NOTE:** Updating headers after start_stream() will cause an error.
 
 ```python
 @app.route(path="/stream", method="GET", stream="text/plain")
@@ -339,7 +378,7 @@ You'll typically need two optional callbacks (not required):
 
 In the echo example below, the **read_me()** callback first checks if the client is still connected. If yes, it echoes back the exact message it received.
 
-**NOTE:** The on_message() callback must accept 1 argument which is the data sent by the client.
+> **NOTE:** The on_message() callback must accept 1 argument which is the data sent by the client.
 
 ```python
 @app.websocket(path="/chat", method="GET")

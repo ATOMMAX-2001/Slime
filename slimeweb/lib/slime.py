@@ -102,69 +102,27 @@ class Slime:
 
         if not found:
             raise RouteHandlerNotFoundException(
-                "You need to define the request handler to declare middleware"
+                f"You need to define the request handler to declare middleware for Path: {path}, Method: {method}"
             )
-
-        # found: bool = False
-        # for route in self.__routes:
-        #     if (route.path == path and route.method == method) or (
-        #         method == "*" and route.path == path
-        #     ):
-        #         call_handler = self.__routes.get(route)
-        #         if call_handler is not None and call_handler["handler"] is not None:
-        #             if call_handler["handler"][1] == is_async:
-        #                 if call_handler[middle_kind] is None:
-        #                     call_handler[middle_kind] = [
-        #                         (
-        #                             handler,
-        #                             is_async,
-        #                         )
-        #                     ]
-        #                     found = True
-        #                     break
-        #                 else:
-        #                     call_handler[middle_kind].append((handler, is_async))
-        #                     found = True
-        #                     break
-        #             else:
-        #                 error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
-        #                 raise InvalidMiddlewareHandlerType(error)
-        # if not found:
-        #     raise RouteHandlerNotFoundException(
-        #         "You need to define the request handler to declare middleware"
-        #     )
 
     def middle_before(
         self, path: str = "/", method: List[str] | str = "GET"
     ) -> Callable:
         def wrapper(middle_handler) -> Callable:
-            if middle_handler is None or not callable(middle_handler):
-                raise InvalidHandler(
-                    f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
-                )
-            # apply this middleware to all the available route or path
-            if path == "*":
-                for route in self.__routes:
-                    call_handler = self.__routes.get(route)
-                    if call_handler is not None:
-                        if call_handler["before"] is None:
-                            call_handler["before"] = [
-                                (
-                                    middle_handler,
-                                    inspect.iscoroutinefunction(middle_handler),
-                                )
-                            ]
-                        else:
-                            call_handler["before"].append(
-                                (
-                                    middle_handler,
-                                    inspect.iscoroutinefunction(middle_handler),
-                                )
+            is_async = inspect.iscoroutinefunction(middle_handler)
+            if isinstance(method, list):
+                if path == "*":
+                    for route in self.__routes:
+                        if route.method in method:
+                            self.__apply_middleware(
+                                handler=middle_handler,
+                                is_async=is_async,
+                                method=route.method,
+                                middle_kind="before",
+                                path=route.path,
                             )
-            else:
-                is_async = inspect.iscoroutinefunction(middle_handler)
-                if isinstance(method, list):
-                    for method_col in dict.fromkeys(method):
+                else:
+                    for method_col in method:
                         self.__apply_middleware(
                             handler=middle_handler,
                             is_async=is_async,
@@ -172,25 +130,29 @@ class Slime:
                             middle_kind="before",
                             path=path,
                         )
-                else:
-                    if method == "*":
-                        global AVAILABLE_METHOD
-                        for all_method in AVAILABLE_METHOD:
+            elif isinstance(method, str):
+                if path == "*":
+                    for route in self.__routes:
+                        if route.method == method:
                             self.__apply_middleware(
                                 handler=middle_handler,
                                 is_async=is_async,
-                                method=all_method,
+                                method=method,
                                 middle_kind="before",
-                                path=path,
+                                path=route.path,
                             )
-                    else:
-                        self.__apply_middleware(
-                            handler=middle_handler,
-                            is_async=is_async,
-                            method=method,
-                            middle_kind="before",
-                            path=path,
-                        )
+                else:
+                    self.__apply_middleware(
+                        handler=middle_handler,
+                        is_async=is_async,
+                        method=method,
+                        middle_kind="before",
+                        path=path,
+                    )
+            else:
+                raise InvalidHandler(
+                    "Method should be of type : String or List[String]"
+                )
             return middle_handler
 
         return wrapper
@@ -199,32 +161,20 @@ class Slime:
         self, path: str = "/", method: List[str] | str = "GET"
     ) -> Callable:
         def wrapper(middle_handler) -> Callable:
-            if middle_handler is None or not callable(middle_handler):
-                raise InvalidHandler(
-                    f"Middleware handler should be a function for [Path: {path}, Method: {method}]"
-                )
-            if path == "*":
-                for route in self.__routes:
-                    call_handler = self.__routes.get(route)
-                    if call_handler is not None:
-                        if call_handler["after"] is None:
-                            call_handler["after"] = [
-                                (
-                                    middle_handler,
-                                    inspect.iscoroutinefunction(middle_handler),
-                                )
-                            ]
-                        else:
-                            call_handler["after"].append(
-                                (
-                                    middle_handler,
-                                    inspect.iscoroutinefunction(middle_handler),
-                                )
+            is_async = inspect.iscoroutinefunction(middle_handler)
+            if isinstance(method, list):
+                if path == "*":
+                    for route in self.__routes:
+                        if route.method in method:
+                            self.__apply_middleware(
+                                handler=middle_handler,
+                                is_async=is_async,
+                                method=route.method,
+                                middle_kind="after",
+                                path=route.path,
                             )
-            else:
-                is_async = inspect.iscoroutinefunction(middle_handler)
-                if isinstance(method, list):
-                    for method_col in dict.fromkeys(method):
+                else:
+                    for method_col in method:
                         self.__apply_middleware(
                             handler=middle_handler,
                             is_async=is_async,
@@ -232,28 +182,59 @@ class Slime:
                             middle_kind="after",
                             path=path,
                         )
-                else:
-                    if method == "*":
-                        global AVAILABLE_METHOD
-                        for all_method in AVAILABLE_METHOD:
+            elif isinstance(method, str):
+                if path == "*":
+                    for route in self.__routes:
+                        if route.method == method:
                             self.__apply_middleware(
                                 handler=middle_handler,
                                 is_async=is_async,
-                                method=all_method,
+                                method=method,
                                 middle_kind="after",
-                                path=path,
+                                path=route.path,
                             )
-                    else:
-                        self.__apply_middleware(
-                            handler=middle_handler,
-                            is_async=is_async,
-                            method=method,
-                            middle_kind="after",
-                            path=path,
-                        )
+                else:
+                    self.__apply_middleware(
+                        handler=middle_handler,
+                        is_async=is_async,
+                        method=method,
+                        middle_kind="after",
+                        path=path,
+                    )
+            else:
+                raise InvalidHandler(
+                    "Method should be of type : String or List[String]"
+                )
             return middle_handler
 
         return wrapper
+
+    def use(self, obj: Type, method: List[str] | str = "*", path="*") -> None:
+        if not isinstance(obj, type):
+            raise InvalidMiddlewareHandlerType(
+                'SlimePlugin has to be type class with "middle_before" or "middle_after" method'
+            )
+
+        plugin_instance = obj()
+        found: bool = False
+        if hasattr(plugin_instance, "middle_before"):
+            found = True
+
+            @self.middle_before(path=path, method=method)
+            def before_plugin_handler(req, resp):
+                plugin_instance.middle_before(req, resp)
+
+        if hasattr(plugin_instance, "middle_after"):
+            found = True
+
+            @self.middle_after(path=path, method=method)
+            def after_plugin_handler(req, resp):
+                plugin_instance.middle_after(req, resp)
+
+        if not found:
+            raise InvalidMiddlewareHandlerType(
+                "SlimePlugin class should have atleast one method middle_before or middle_after"
+            )
 
     def __apply_route(
         self,
@@ -391,33 +372,6 @@ class Slime:
         self,
     ) -> Dict[Routes, Dict[str, List[Tuple[Callable, bool]] | None]]:
         return self.__routes
-
-    def use(self, obj: Type, method: List[str] | str = "GET", path="*") -> None:
-        if not isinstance(obj, type):
-            raise InvalidMiddlewareHandlerType(
-                'SlimePlugin has to be type class with "middle_before" or "middle_after" method'
-            )
-
-        plugin_instance = obj()
-        found: bool = False
-        if hasattr(plugin_instance, "middle_before"):
-            found = True
-
-            @self.middle_before(path=path, method=method)
-            def before_plugin_handler(req, resp):
-                plugin_instance.middle_before(req, resp)
-
-        if hasattr(plugin_instance, "middle_after"):
-            found = True
-
-            @self.middle_after(path=path, method=method)
-            def after_plugin_handler(req, resp):
-                plugin_instance.middle_after(req, resp)
-
-        if not found:
-            raise InvalidMiddlewareHandlerType(
-                "SlimePlugin class should have atleast one method middle_before or middle_after"
-            )
 
     def serve(
         self,

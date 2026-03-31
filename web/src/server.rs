@@ -13,7 +13,7 @@ use axum::{
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::StreamExt;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 use pyo3::{prelude::*, types::PyTuple};
 use rayon::{ThreadPoolBuilder, yield_now};
 
@@ -235,22 +235,28 @@ impl SlimeServer {
 
             if let Ok(Some(before_handler)) = handler.get_item("before") {
                 if !before_handler.is_none() {
-                    let handler_object = before_handler.cast::<PyTuple>()?;
+                    let handler_object_collection: &Bound<PyList> =
+                        before_handler.cast::<PyList>()?;
+                    for before_middle in handler_object_collection {
+                        let handler_object = before_middle.cast::<PyTuple>()?;
 
-                    handlers.push((
-                        handler_object.get_item(0).unwrap().unbind(),
-                        handler_object
-                            .get_item(1)
-                            .unwrap()
-                            .extract::<bool>()
-                            .unwrap_or(false),
-                    ));
+                        handlers.push((
+                            handler_object.get_item(0).unwrap().unbind(),
+                            handler_object
+                                .get_item(1)
+                                .unwrap()
+                                .extract::<bool>()
+                                .unwrap_or(false),
+                        ));
+                    }
                 }
             }
             if let Ok(Some(request_handler)) = handler.get_item("handler") {
                 if !request_handler.is_none() {
-                    let handler_object = request_handler.cast::<PyTuple>()?;
+                    let handler_object_collection = request_handler.cast::<PyList>()?;
 
+                    let handler_object_item = handler_object_collection.get_item(0)?;
+                    let handler_object = handler_object_item.cast::<PyTuple>()?;
                     handlers.push((
                         handler_object.get_item(0).unwrap().unbind(),
                         handler_object
@@ -263,16 +269,21 @@ impl SlimeServer {
             }
             if let Ok(Some(after_handler)) = handler.get_item("after") {
                 if !after_handler.is_none() {
-                    let handler_object = after_handler.cast::<PyTuple>()?;
+                    let handler_object_collection: &Bound<PyList> =
+                        after_handler.cast::<PyList>()?;
 
-                    handlers.push((
-                        handler_object.get_item(0).unwrap().unbind(),
-                        handler_object
-                            .get_item(1)
-                            .unwrap()
-                            .extract::<bool>()
-                            .unwrap_or(false),
-                    ));
+                    for after_middle in handler_object_collection {
+                        let handler_object = after_middle.cast::<PyTuple>()?;
+
+                        handlers.push((
+                            handler_object.get_item(0).unwrap().unbind(),
+                            handler_object
+                                .get_item(1)
+                                .unwrap()
+                                .extract::<bool>()
+                                .unwrap_or(false),
+                        ));
+                    }
                 }
             }
             routes_collection.push(Route::new(path, method, stream, ws, compression, handlers));

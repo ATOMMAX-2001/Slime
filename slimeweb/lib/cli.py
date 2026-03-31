@@ -67,7 +67,7 @@ if __name__ == "__main__":
     print("[*] slime run main")
 
 
-def run_project(script: Path):
+def run_project(script: Path, no_gil: bool = True):
 
     script_path = Path.cwd()
     if script.suffix == ".py":
@@ -79,10 +79,33 @@ def run_project(script: Path):
         print(f"❌ Script '{script_path}' not found")
         sys.exit(1)
     try:
-        command = ["uv", "run", "python", "-Xgil=0", script_path]
+        gil_setting = "-Xgil=0" if no_gil else "-Xgil=1"
+        command = ["uv", "run", "python", gil_setting, script_path]
         sp.run(command)
     except Exception as err:
         print("Error Running (reason)=> ", err)
+
+
+def add_lib(lib: list):
+    command = ["uv", "add"]
+    command.extend(lib)
+    try:
+        sp.run(command, check=True)
+    except Exception:
+        print(
+            "Unable to download the package, Verify if it's available for that version or your current Python runtime"
+        )
+
+
+def change_python_version(version):
+    try:
+        sp.run(["uv", "--native-tls", "run", "python", version], check=True)
+    except Exception:
+        print(f"Unable to use {version}, No such python runtime available")
+        print(
+            "These are currently available right now, please choose one of the runtime"
+        )
+        sp.run(["uv", "--native-tls", "python", "list"])
 
 
 def display_logo():
@@ -92,7 +115,7 @@ def display_logo():
     print("   ___ \\| | | '_ ` _ \\ / _ \\ \\/  \\/ / _ \\ '_ \\ ")
     print("  ____) | | | | | | | |  __/\\  /\\  /  __/ |_) |")
     print(" |_____/|_|_|_| |_| |_|\\___| \\/  \\/ \\___|_.__/ ")
-    print("Version: 0.1.3\t\t\t Author: S.Abilash")
+    print("Version: 0.1.5\t\t\t Author: S.Abilash")
 
 
 def main():
@@ -122,7 +145,23 @@ def main():
         parent_path = Path(args[0]).parent
         project_path = parent_path.joinpath(Path(args[1]))
         run_project(project_path)
+    elif command == "rung":
+        if len(args) != 2:
+            print("Usage: slime rung <script>")
+            sys.exit(1)
 
+        parent_path = Path(args[0]).parent
+        project_path = parent_path.joinpath(Path(args[1]))
+        run_project(project_path, no_gil=False)
+    elif command == "add":
+        if len(args) < 2:
+            print("Usage: slime add slimeweb")
+        add_lib(args[1:])
+    elif command == "use":
+        if len(args) != 2:
+            print("Usage: slime use python3.12")
+            sys.exit(1)
+        change_python_version(args[1])
     else:
         print(f"Unknown command: {command}")
 
