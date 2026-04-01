@@ -125,7 +125,7 @@ impl WebSocketConnectionBook {
     pub fn add_conn(&self, value: WebSocketConn) {
         self.connection.insert(value.id, value);
     }
-    pub fn remoe_conn(&self, id: Uuid) {
+    pub fn remove_conn(&self, id: Uuid) {
         self.connection.remove(&id);
     }
 }
@@ -671,7 +671,7 @@ async fn websocket_handler(
             tok_hand.spawn(async move {
                 while let Some(msg) = ws_rx.recv().await {
                     if let Err(err) = sender.send(Message::Binary(msg)).await {
-                        println!("ERROR: {}", err.to_string());
+                        println!("Websocket ERROR: {}", err.to_string());
                         break;
                     }
                 }
@@ -725,10 +725,10 @@ async fn websocket_handler(
                                 }
                             }
                             Message::Close(_) => {
-                                if let Some(handler_func) = &(*resp.on_message_handler) {
+                                if let Some(handler_func) = &(*resp.on_close_handler) {
                                     let _ = Python::attach(|py| handler_func.call0(py));
                                 }
-                                state.remoe_conn(id);
+                                state.remove_conn(id);
                             }
                             _ => {}
                         }
@@ -876,6 +876,7 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
                             conn: req.conn,
                             on_message_handler: Arc::new(None),
                             on_close_handler: Arc::new(None),
+                            on_error_handler: Arc::new(None),
                         },
                     ),
                 )
@@ -998,6 +999,7 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler:
                             conn: req.conn,
                             on_message_handler: Arc::new(None),
                             on_close_handler: Arc::new(None),
+                            on_error_handler: Arc::new(None),
                         },
                     );
                     match (Py::new(py, req.request), response_obj) {

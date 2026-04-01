@@ -291,6 +291,7 @@ pub struct SlimeWebSocketResponse {
     pub conn: WebSocketConn,
     pub on_message_handler: Arc<Option<Py<PyAny>>>,
     pub on_close_handler: Arc<Option<Py<PyAny>>>,
+    pub on_error_handler: Arc<Option<Py<PyAny>>>,
 }
 
 impl Clone for SlimeWebSocketResponse {
@@ -299,6 +300,7 @@ impl Clone for SlimeWebSocketResponse {
             conn: self.conn.clone(),
             on_message_handler: self.on_message_handler.clone(),
             on_close_handler: self.on_close_handler.clone(),
+            on_error_handler: self.on_error_handler.clone(),
         }
     }
 }
@@ -315,6 +317,10 @@ impl SlimeWebSocketResponse {
     }
     fn on_close(&mut self, handler: Py<PyAny>) -> PyResult<()> {
         self.on_close_handler = Arc::new(Some(handler));
+        return Ok(());
+    }
+    fn on_error(&mut self, handler: Py<PyAny>) -> PyResult<()> {
+        self.on_error_handler = Arc::new(Some(handler));
         return Ok(());
     }
 

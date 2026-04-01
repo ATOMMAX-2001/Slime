@@ -106,7 +106,7 @@ if __name__ == "__main__":
     slime new projectName   -> Create new project
     slime run main          -> Run slime without GIL
     slime rung main         -> Run slime with GIL
-    slime add packageName   -> Add lib to the project uses 
+    slime add packageName   -> Add lib to the project deps
     slime use python3.12    -> Change the python runtime
 ```
 
