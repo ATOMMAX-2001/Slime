@@ -81,7 +81,7 @@ def run_project(script: Path, no_gil: bool = True):
     try:
         os.environ["PYTHON_GIL"] = "0" if no_gil else "1"
         command = ["uv", "run", "python", script_path]
-        sp.run(command)
+        sp.run(command, env=os.environ.copy())
     except Exception as err:
         print("Error Running (reason)=> ", err)
 

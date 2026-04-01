@@ -47,6 +47,7 @@ Hello World from slime
 - Static serving
 - Hot reload of templates in dev mode
 - WebSocket
+- App state
 - Compression
 - Middleware Plugin
 
