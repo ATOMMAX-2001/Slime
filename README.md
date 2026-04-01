@@ -107,7 +107,7 @@ if __name__ == "__main__":
     slime rung main         -> Run slime with GIL
     slime add packageName   -> Add lib to the project uses 
     slime use python3.12    -> Change the python runtime
- ```
+```
 
 
 ## Basic Application
@@ -233,30 +233,6 @@ In this example, Gzip compression is enabled for the route. If the client reques
 
 
 
-### Middleware Plugin
- 
-Slime lets you create custom middleware plugins with the **use()** method. Define a plugin class with **middle_after** and **middle_before** methods. Both the mesthod should accept two argument SlimeRequest and SlimeResponse.
-
-```python
-class SimpleMiddle:
-    def middle_after(self, req, resp):
-        resp.set_header("PluginAfter","CustomPlugin")
-    def middle_before(self, req, resp):
-        resp.set_header("PluginBefore","CustomPlugin")
-        
-        
-if __name__ == "__main__":
-    app.use(SimpleMiddle)
-    # or 
-    app.use(SimpleMiddle,method=["POST","GET"],path="/home")
-
-```
-
-This example builds a custom middleware plugin named SimpleMiddle with both middle_after and middle_before methods. To apply the plugin, we are using **use()** method, which targets all routes and HTTP methods by default. We can limit the scope of the plugin by specifying the route and the path.
-
-> **NOTE:** Plugin **use()** should be used after declaring the routes, otherwise error will be raised.
-
-
 ### Template Render
 
 ```python
@@ -338,6 +314,33 @@ def land_after(req, resp):
 ```
 
 > **NOTE:** Middleware handlers must match the **route handler's type**. If your route handler is asynchronous, the middleware must also be async (and vice versa for sync).
+
+
+
+### Middleware Plugin
+ 
+Slime lets you create custom middleware plugins with the **use()** method. Define a plugin class with **middle_after** and **middle_before** methods. Both the mesthod should accept two argument SlimeRequest and SlimeResponse.
+
+```python
+class SimpleMiddle:
+    def middle_after(self, req, resp):
+        resp.set_header("PluginAfter","CustomPlugin")
+    def middle_before(self, req, resp):
+        resp.set_header("PluginBefore","CustomPlugin")
+        
+        
+if __name__ == "__main__":
+    app.use(SimpleMiddle)
+    # or 
+    app.use(SimpleMiddle,method=["POST","GET"],path="/home")
+
+```
+
+This example builds a custom middleware plugin named SimpleMiddle with both middle_after and middle_before methods. To apply the plugin, we are using **use()** method, which targets all routes and HTTP methods by default. We can limit the scope of the plugin by specifying the route and the path.
+
+> **NOTE:** Plugin **use()** should be used after declaring the routes, otherwise error will be raised.
+
+
 
 ### Streaming
 
@@ -486,9 +489,9 @@ from slimeweb import SlimeCompression #Enum
 ```
 
 ### Benchmark
-[BenchMark Code with slime example:](https://github.com/Abilash2001/SlimeWeb/)
+[BenchMark Code with no-gil example:](https://github.com/Abilash2001/SlimeWeb/)
 
-![Slimeweb benchmark](https://raw.githubusercontent.com/Abilash2001/SlimeWeb/main/bench/slimebench.png)
+![Slimeweb benchmark with no-gil](https://raw.githubusercontent.com/Abilash2001/SlimeWeb/main/bench/slimebench.png)
 
 
 ### License

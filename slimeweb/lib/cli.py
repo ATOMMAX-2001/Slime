@@ -79,8 +79,8 @@ def run_project(script: Path, no_gil: bool = True):
         print(f"❌ Script '{script_path}' not found")
         sys.exit(1)
     try:
-        gil_setting = "-Xgil=0" if no_gil else "-Xgil=1"
-        command = ["uv", "run", "python", gil_setting, script_path]
+        os.environ["PYTHON_GIL"] = "0" if no_gil else "1"
+        command = ["uv", "run", "python", script_path]
         sp.run(command)
     except Exception as err:
         print("Error Running (reason)=> ", err)
