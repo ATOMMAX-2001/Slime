@@ -97,7 +97,8 @@ class Slime:
                             result.append((handler, is_async))
                         break
                     else:
-                        error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][1] else 'sync'} type similar to route handler"
+                        print(call_handler)
+                        error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][0] else 'sync'} type similar to route handler"
                         raise InvalidMiddlewareHandlerType(error)
 
         if not found:
@@ -373,6 +374,67 @@ class Slime:
     ) -> Dict[Routes, Dict[str, List[Tuple[Callable, bool]] | None]]:
         return self.__routes
 
+    def generate_docs(self):
+        api = {
+            "openapi": "3.2.0",
+            "info": {"title": "SlimeWeb Api Docs", "version": "0.1"},
+            "paths": {
+                "/plain": {
+                    "get": {
+                        "summary": "land_plain",
+                        "responses": {
+                            "200": {
+                                # "description": "Plain text response",
+                                # "content": {
+                                #     "text/plain": {
+                                #         "schema": {
+                                #             "type": "string",
+                                #             "example": "hello world",
+                                #         }
+                                #     }
+                                # },
+                            }
+                        },
+                    }
+                }
+            },
+        }
+        HTML_BODY = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Docs</title>
+          <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css" />
+        </head>
+        <body>
+          <div id="swagger"></div>
+
+          <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+          <script>
+            SwaggerUIBundle({
+              url: "/openapi.json",
+              dom_id: "#swagger",
+              deepLinking: true,
+                presets: [
+                  SwaggerUIBundle.presets.apis,
+                  SwaggerUIBundle.SwaggerUIStandalonePreset
+                ],
+                layout: "BaseLayout"
+
+            });
+          </script>
+        </body>
+        </html>
+        """
+
+        @self.route("/docs", method="GET")
+        def land_docs(req, resp):
+            return resp.html(HTML_BODY)
+
+        @self.route("/openapi.json", method="GET")
+        def land_api_schema(req, resp):
+            return resp.json(api)
+
     def serve(
         self,
         host: str = "127.0.0.1",
@@ -381,10 +443,14 @@ class Slime:
         dev: bool = False,
         app_state: Dict[str, Any] = {},
     ) -> None:
+        if dev:
+            self.generate_docs()
+
         if secret_key is None:
             import secrets
 
             secret_key = secrets.token_urlsafe(30)
+
         import web
 
         web.init_web(self, host, port, secret_key, dev, app_state)

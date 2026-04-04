@@ -109,4 +109,4 @@ def hello(req, resp):
 if __name__ == "__main__":
     app.use(SampleMiddle, method=["GET", "POST"])
 
-    app.serve(app_state={"counter": 0})
+    app.serve(app_state={"counter": 0}, dev=True)
