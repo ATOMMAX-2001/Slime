@@ -1,9 +1,12 @@
-from lib.slime import Slime, SlimeCompression
+from lib.slime import Slime, SlimeCompression, SlimeResponseType
 
 app = Slime(__file__)
 
 
-@app.route("/", method="*")
+@app.docs(
+    description="Simple landing page", response_type=SlimeResponseType.PlainResponse
+)
+@app.route("/", method="GET")
 def land(req, resp):
     print(req.header)
     if req.method == "GET":

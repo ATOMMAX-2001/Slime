@@ -1,6 +1,7 @@
 # AUTHOR: S.ABILASH
 # Email: abinix01@gmail.com
 
+import copy
 import inspect
 from enum import Enum
 from typing import Any, Callable, Dict, List, Literal, Tuple, Type
@@ -21,6 +22,57 @@ class SlimeCompression(Enum):
     Gzip = 1
     Brotli = 2
     Zstd = 3
+
+
+class SlimeResponseType(Enum):
+    PlainResponse = 0
+    JsonResponse = 1
+    HTMLResponse = 2
+    StreamResponse = 3
+    WebSocketResponse = 4
+    CsvResponse = 5
+    XmlResponse = 6
+    BinaryResponse = 7
+
+
+class SlimeDocs:
+    def __init__(
+        self,
+        handler_name: str,
+        title: str = "",
+        description: str = "",
+        path: str = "",
+        method: List[str] = [],
+        response_type: SlimeResponseType = SlimeResponseType.JsonResponse,
+    ) -> None:
+        self.handler_name = handler_name
+        self.title = title
+        self.description = description
+        self.path = path
+        self.method = (
+            copy.deepcopy(AVAILABLE_METHOD)
+            if len(method) == 1 and method[0] == "*"
+            else method
+        )
+        self.response_type = response_type
+
+    def get_response_content(self) -> str:
+        if self.response_type == SlimeResponseType.HTMLResponse:
+            return "text/html"
+        elif self.response_type in [
+            SlimeResponseType.PlainResponse,
+            SlimeResponseType.WebSocketResponse,
+        ]:
+            return "text/plain"
+
+        elif self.response_type == SlimeResponseType.CsvResponse:
+            return "text/csv"
+        elif self.response_type == SlimeResponseType.XmlResponse:
+            return "text/xml"
+        elif self.response_type == SlimeResponseType.BinaryResponse:
+            return "application/octet-stream"
+        else:
+            return "application/json"
 
 
 class Routes:
@@ -74,6 +126,10 @@ class Slime:
         # like let saay user can assign  a path /name
         # with methods like GET,POST under /name
         self.__routes: Dict[Routes, Dict[str, List[Tuple[Callable, bool]] | None]] = {}
+
+        # to generate swagger docs user can  create
+        # custom definition
+        self.__docs: List[SlimeDocs] = []
 
     def __apply_middleware(
         self,
@@ -277,6 +333,9 @@ class Slime:
                 raise InvalidHandler(
                     f"Route handler should be a function for [Path: {path}, Method: {method}]"
                 )
+            setattr(route_handler, "__path", path)
+            setattr(route_handler, "__method", method)
+            setattr(route_handler, "__set_docs", False)
             if isinstance(method, list):
                 for method_col in dict.fromkeys(method):
                     self.__apply_route(
@@ -328,6 +387,9 @@ class Slime:
                 raise ValueError(
                     f"Stream content type should be of type <String> with MIME for [Path: {path}, Method: {method}]"
                 )
+            setattr(stream_handler, "__path", path)
+            setattr(stream_handler, "__method", method)
+            setattr(stream_handler, "__set_docs", False)
             if isinstance(method, list):
                 for method_col in dict.fromkeys(method):
                     self.__apply_route(
@@ -357,6 +419,9 @@ class Slime:
                 raise InvalidHandler(
                     f"Websocket handler should be a function for [Path: {path}, Method: {method}]"
                 )
+            setattr(websocket_handler, "__path", path)
+            setattr(websocket_handler, "__method", method)
+            setattr(websocket_handler, "__set_docs", False)
             self.__apply_route(
                 compression=SlimeCompression.NoCompression,
                 handler=websocket_handler,
@@ -374,31 +439,68 @@ class Slime:
     ) -> Dict[Routes, Dict[str, List[Tuple[Callable, bool]] | None]]:
         return self.__routes
 
-    def generate_docs(self):
+    def docs(
+        self,
+        title: str = "",
+        description: str = "",
+        response_type: SlimeResponseType = SlimeResponseType.JsonResponse,
+    ):
+        def wrapper(handler):
+            if not callable(handler):
+                raise RuntimeError("@docs needs to be define above @route.")
+            is_docs_sett = getattr(handler, "__set_docs", False)
+            if is_docs_sett:
+                raise ValueError("@docs has been already defined for this route")
+            path = getattr(handler, "__path", None)
+            method = getattr(handler, "__method", None)
+
+            function_name = handler.__name__
+
+            if path is None or method is None:
+                raise ValueError("@docs can be defined only for routes.")
+
+            self.__docs.append(
+                SlimeDocs(
+                    handler_name=function_name,
+                    description=description,
+                    title=title,
+                    method=[method] if isinstance(method, str) else method,
+                    path=path,
+                    response_type=response_type,
+                )
+            )
+            setattr(handler, "__set_docs", True)
+            return handler
+
+        return wrapper
+
+    def __generate_docs_path(self):
         api = {
             "openapi": "3.2.0",
             "info": {"title": "SlimeWeb Api Docs", "version": "0.1"},
-            "paths": {
-                "/plain": {
-                    "get": {
-                        "summary": "land_plain",
+            "paths": {},
+        }
+        all_paths = list(set(self.__docs))
+        for path in all_paths:
+            for method in path.method:
+                result = {
+                    method.lower(): {
+                        "summary": path.description,
                         "responses": {
                             "200": {
-                                # "description": "Plain text response",
-                                # "content": {
-                                #     "text/plain": {
-                                #         "schema": {
-                                #             "type": "string",
-                                #             "example": "hello world",
-                                #         }
-                                #     }
-                                # },
+                                "description": path.title,
+                                "content": {
+                                    path.get_response_content(): {"schame": {}}
+                                },
                             }
                         },
                     }
                 }
-            },
-        }
+                api["paths"][path.path] = copy.deepcopy(result)
+        return api
+
+    def generate_docs(self):
+        api = self.__generate_docs_path()
         HTML_BODY = """
         <!DOCTYPE html>
         <html>
