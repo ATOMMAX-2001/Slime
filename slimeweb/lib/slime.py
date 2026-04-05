@@ -482,21 +482,22 @@ class Slime:
         }
         all_paths = list(set(self.__docs))
         for path in all_paths:
+            api["paths"][path.path] = {}
             for method in path.method:
+                api["paths"][path.path][method.lower()] = {}
                 result = {
-                    method.lower(): {
-                        "summary": path.description,
-                        "responses": {
-                            "200": {
-                                "description": path.title,
-                                "content": {
-                                    path.get_response_content(): {"schame": {}}
-                                },
-                            }
-                        },
-                    }
+                    "summary": path.title,
+                    "operationId": path.handler_name,
+                    "parameters": [{"schema": {}}],
+                    "requestBody": {"content": {"application/json": {"schema": {}}}},
+                    "responses": {
+                        "200": {
+                            "description": path.description,
+                            "content": {path.get_response_content(): {"schame": {}}},
+                        }
+                    },
                 }
-                api["paths"][path.path] = copy.deepcopy(result)
+                api["paths"][path.path][method.lower()] = copy.deepcopy(result)
         return api
 
     def generate_docs(self):
@@ -505,7 +506,7 @@ class Slime:
         <!DOCTYPE html>
         <html>
         <head>
-          <title>Docs</title>
+          <title>SlimeWeb Api Docs</title>
           <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css" />
         </head>
         <body>
@@ -545,7 +546,7 @@ class Slime:
         dev: bool = False,
         app_state: Dict[str, Any] = {},
     ) -> None:
-        if dev:
+        if dev and len(self.__docs) != 0:
             self.generate_docs()
 
         if secret_key is None:
