@@ -4,7 +4,7 @@
 import copy
 import inspect
 from enum import Enum
-from typing import Any, Callable, Dict, List, Literal, Tuple, Type
+from typing import Any, Callable, Dict, List, Literal, Set, Tuple, Type
 
 from .errors import (
     InvalidHandler,
@@ -35,6 +35,103 @@ class SlimeResponseType(Enum):
     BinaryResponse = 7
 
 
+class QuerySchema:
+    def __init__(self, name, type, required=True) -> None:
+        self.name: str = name
+        self.type: str = ""
+        if type is int:
+            self.type = "integer"
+        elif type is str:
+            self.type = "string"
+        elif type is bool:
+            self.type = "boolean"
+        else:
+            raise ValueError("Query schema can have only int|str|bool type")
+        self.required: bool = required
+
+    def compile(self):
+        return {
+            "name": self.name,
+            "in": "query",
+            "required": self.required,
+            "schema": {"type": self.type, "title": self.name.upper()},
+        }
+
+
+class BodySchema:
+    def __init__(self, schema_name: Type) -> None:
+        if not isinstance(schema_name, type):
+            raise ValueError("Need proper schema body")
+        self.schema_name = schema_name.__name__
+        self.schema_struture = schema_name.__annotations__
+        self.external_schema: Set[BodySchema] = set()
+
+    def required(self) -> List[str]:
+        return list(dict.fromkeys(self.schema_struture))
+
+    def compile(self) -> Dict[str, Dict[str, str]]:
+        result = {}
+        for key, value in self.schema_struture.items():
+            result[key] = {}
+            result[key]["title"] = key
+            if value is int:
+                result[key]["type"] = "number"
+            elif value is str:
+                result[key]["type"] = "string"
+            elif value is bool:
+                result[key]["type"] = "boolean"
+            elif hasattr(value, "__origin__") and (
+                value.__origin__ is list or value.__origin__ is dict
+            ):
+                is_dict = value.__origin__ is dict
+                if is_dict:
+                    result[key]["type"] = "object"
+                else:
+                    result[key]["type"] = "array"
+
+                kind = ""
+                index = 0
+                if is_dict:
+                    index = 1
+                    kind = "additionalProperties"
+                else:
+                    index = 0
+                    kind = "items"
+                if value.__args__[index] is int:
+                    result[key][kind] = {"type": "integer"}
+                elif value.__args__[index] is bool:
+                    result[key][kind] = {"type": "boolean"}
+                elif value.__args__[index] is str:
+                    result[key][kind] = {"type": "string"}
+                elif isinstance(value.__args__[index], type):
+                    result[key][kind] = {
+                        "$ref": f"#/components/schemas/{value.__args__[index].__name__}"
+                    }
+                    self.external_schema.add(BodySchema(value.__args__[index]))
+                else:
+                    raise ValueError("Unknown type, Need proper value ")
+
+            elif isinstance(value, type):
+                self.external_schema.add(BodySchema(value))
+                result[key] = {"$ref": f"#/components/schemas/{value.__name__}"}
+            else:
+                raise ValueError(
+                    f"Invalid definition need value with BodySchema instance {value}"
+                )
+        return result
+
+
+class SlimeSchema:
+    def __init__(
+        self, query: List[QuerySchema] | None = None, body: BodySchema | None = None
+    ) -> None:
+        if isinstance(query, list) or query is None:
+            self.query: List[QuerySchema] | None = query
+        else:
+            raise ValueError("QuerySchema has to be in list")
+        self.body: BodySchema | None = body
+
+
 class SlimeDocs:
     def __init__(
         self,
@@ -44,6 +141,7 @@ class SlimeDocs:
         path: str = "",
         method: List[str] = [],
         response_type: SlimeResponseType = SlimeResponseType.JsonResponse,
+        schema: SlimeSchema = SlimeSchema(),
     ) -> None:
         self.handler_name = handler_name
         self.title = title
@@ -55,6 +153,7 @@ class SlimeDocs:
             else method
         )
         self.response_type = response_type
+        self.schema = schema
 
     def get_response_content(self) -> str:
         if self.response_type == SlimeResponseType.HTMLResponse:
@@ -518,6 +617,7 @@ class Slime:
         title: str = "",
         description: str = "",
         response_type: SlimeResponseType = SlimeResponseType.JsonResponse,
+        schema: SlimeSchema = SlimeSchema(),
     ):
         def wrapper(handler):
             if not callable(handler):
@@ -541,6 +641,7 @@ class Slime:
                     method=[method] if isinstance(method, str) else method,
                     path=path,
                     response_type=response_type,
+                    schema=schema,
                 )
             )
             setattr(handler, "__set_docs", True)
@@ -550,20 +651,52 @@ class Slime:
 
     def __generate_docs_path(self):
         api = {
-            "openapi": "3.2.0",
+            "openapi": "3.0.3",
             "info": {"title": "SlimeWeb Api Docs", "version": "0.1"},
             "paths": {},
         }
         all_paths = list(set(self.__docs))
         for path in all_paths:
             api["paths"][path.path] = {}
+            schema_result = {}
+            if path.schema.body is not None:
+                schema_result = {
+                    path.schema.body.schema_name: {
+                        "properties": path.schema.body.compile(),
+                        "type": "object",
+                        "required": path.schema.body.required(),
+                    }
+                }
+                for ext_schema in path.schema.body.external_schema:
+                    schema_result[ext_schema.schema_name] = {
+                        "properties": ext_schema.compile(),
+                        "type": "object",
+                        "required": ext_schema.required(),
+                    }
+                api["components"] = {
+                    "schemas": schema_result,
+                }
+            query_schema_result = []
+            if path.schema.query is not None:
+                query_schema_result = [query.compile() for query in path.schema.query]
+
             for method in path.method:
                 api["paths"][path.path][method.lower()] = {}
                 result = {
                     "summary": path.title,
                     "operationId": path.handler_name,
-                    "parameters": [{"schema": {}}],
-                    "requestBody": {"content": {"application/json": {"schema": {}}}},
+                    "parameters": query_schema_result,
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": f"#components/schemas/{path.schema.body.schema_name}"
+                                }
+                            }
+                        }
+                    }
+                    if path.schema.body is not None
+                    else {},
                     "responses": {
                         "200": {
                             "description": path.description,

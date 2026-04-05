@@ -1,19 +1,35 @@
-from lib.slime import Slime, SlimeCompression, SlimeResponseType
+from lib.slime import (
+    BodySchema,
+    QuerySchema,
+    Slime,
+    SlimeCompression,
+    SlimeResponseType,
+    SlimeSchema,
+)
 
 app = Slime(__file__)
+
+
+class SubItem:
+    is_item: bool
+    how_long: int
 
 
 class User:
     name: str
     age: int
+    sub: dict[str, SubItem]
 
 
 @app.docs(
     title="just checking",
     description="Simple landing page",
     response_type=SlimeResponseType.PlainResponse,
+    schema=SlimeSchema(
+        body=BodySchema(schema_name=User), query=[QuerySchema(name="name", type=str)]
+    ),
 )
-@app.route("/", method="*")
+@app.route("/", method="GET")
 def land(req, resp):
     print(req.header)
     if req.method == "GET":
