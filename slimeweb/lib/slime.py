@@ -138,6 +138,7 @@ class Slime:
         handler: Callable,
         is_async: bool,
         middle_kind: Literal["before", "after"],
+        is_plugin=False,
     ):
         found: bool = False
         for route in self.__routes:
@@ -153,17 +154,16 @@ class Slime:
                             result.append((handler, is_async))
                         break
                     else:
-                        print(call_handler)
-                        error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][0] else 'sync'} type similar to route handler"
+                        error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][0] else 'sync'} type similar to route handler for Path: {path},Method: {method}"
                         raise InvalidMiddlewareHandlerType(error)
 
-        if not found:
+        if not found and not is_plugin:
             raise RouteHandlerNotFoundException(
                 f"You need to define the request handler to declare middleware for Path: {path}, Method: {method}"
             )
 
     def middle_before(
-        self, path: str = "/", method: List[str] | str = "GET"
+        self, path: str = "/", method: List[str] | str = "GET", _is_plugin: bool = False
     ) -> Callable:
         def wrapper(middle_handler) -> Callable:
             is_async = inspect.iscoroutinefunction(middle_handler)
@@ -186,6 +186,7 @@ class Slime:
                             method=method_col,
                             middle_kind="before",
                             path=path,
+                            is_plugin=_is_plugin,
                         )
             elif isinstance(method, str):
                 if path == "*":
@@ -197,6 +198,7 @@ class Slime:
                                 method=method,
                                 middle_kind="before",
                                 path=route.path,
+                                is_plugin=_is_plugin,
                             )
                 else:
                     self.__apply_middleware(
@@ -205,6 +207,7 @@ class Slime:
                         method=method,
                         middle_kind="before",
                         path=path,
+                        is_plugin=_is_plugin,
                     )
             else:
                 raise InvalidHandler(
@@ -215,7 +218,7 @@ class Slime:
         return wrapper
 
     def middle_after(
-        self, path: str = "/", method: List[str] | str = "GET"
+        self, path: str = "/", method: List[str] | str = "GET", _is_plugin: bool = False
     ) -> Callable:
         def wrapper(middle_handler) -> Callable:
             is_async = inspect.iscoroutinefunction(middle_handler)
@@ -229,6 +232,7 @@ class Slime:
                                 method=route.method,
                                 middle_kind="after",
                                 path=route.path,
+                                is_plugin=_is_plugin,
                             )
                 else:
                     for method_col in method:
@@ -238,6 +242,7 @@ class Slime:
                             method=method_col,
                             middle_kind="after",
                             path=path,
+                            is_plugin=_is_plugin,
                         )
             elif isinstance(method, str):
                 if path == "*":
@@ -249,6 +254,7 @@ class Slime:
                                 method=method,
                                 middle_kind="after",
                                 path=route.path,
+                                is_plugin=_is_plugin,
                             )
                 else:
                     self.__apply_middleware(
@@ -257,6 +263,7 @@ class Slime:
                         method=method,
                         middle_kind="after",
                         path=path,
+                        is_plugin=_is_plugin,
                     )
             else:
                 raise InvalidHandler(
@@ -266,31 +273,98 @@ class Slime:
 
         return wrapper
 
+    def _check_handler_type_for_route(self, path: str, method: str) -> bool:
+        for route, handler in self.__routes.items():
+            if (
+                route.path == path
+                and route.method == method
+                or (path == "*" and route.method == method)
+            ):
+                if handler["handler"] is not None and handler["handler"][0] is not None:
+                    return handler["handler"][0][1]
+        return False
+
+    def __apply_plugin(
+        self, is_async: bool, path: str, method: str | List[str], plugin_instance: Type
+    ):
+        found: bool = False
+
+        if hasattr(plugin_instance, "middle_before"):
+            found = True
+            if is_async:
+
+                @self.middle_before(path=path, method=method, _is_plugin=True)
+                async def before_plugin_async_handler(req, resp):
+                    plugin_instance.middle_before(req, resp)
+            else:
+
+                @self.middle_before(path=path, method=method, _is_plugin=True)
+                def before_plugin_handler(req, resp):
+                    plugin_instance.middle_before(req, resp)
+
+        if hasattr(plugin_instance, "middle_after"):
+            found = True
+            if is_async:
+
+                @self.middle_after(path=path, method=method, _is_plugin=True)
+                async def after_plugin_async_handler(req, resp):
+                    plugin_instance.middle_after(req, resp)
+            else:
+
+                @self.middle_after(path=path, method=method, _is_plugin=True)
+                def after_plugin_handler(req, resp):
+                    plugin_instance.middle_after(req, resp)
+
+        if not found:
+            raise InvalidMiddlewareHandlerType(
+                "SlimePlugin class should have atleast one method middle_before or middle_after"
+            )
+
     def use(self, obj: Type, method: List[str] | str = "*", path="*") -> None:
         if not isinstance(obj, type):
             raise InvalidMiddlewareHandlerType(
                 'SlimePlugin has to be type class with "middle_before" or "middle_after" method'
             )
-
         plugin_instance = obj()
-        found: bool = False
-        if hasattr(plugin_instance, "middle_before"):
-            found = True
+        if path == "*":
+            route_details = {
+                (route.path, route.method): handler["handler"][0][1]  # type: ignore
+                for (route, handler) in self.__routes.items()
+            }
 
-            @self.middle_before(path=path, method=method)
-            def before_plugin_handler(req, resp):
-                plugin_instance.middle_before(req, resp)
+            for route, is_async in route_details.items():
+                if method == "*":
+                    self.__apply_plugin(
+                        is_async=is_async,
+                        method=route[1],
+                        path=route[0],
+                        plugin_instance=plugin_instance,
+                    )
+                else:
+                    if isinstance(method, str) and route[1] == method:
+                        self.__apply_plugin(
+                            is_async=is_async,
+                            method=method,
+                            path=route[0],
+                            plugin_instance=plugin_instance,
+                        )
+                    else:
+                        if route[1] in method:
+                            self.__apply_plugin(
+                                is_async=is_async,
+                                method=method,
+                                path=route[0],
+                                plugin_instance=plugin_instance,
+                            )
 
-        if hasattr(plugin_instance, "middle_after"):
-            found = True
-
-            @self.middle_after(path=path, method=method)
-            def after_plugin_handler(req, resp):
-                plugin_instance.middle_after(req, resp)
-
-        if not found:
-            raise InvalidMiddlewareHandlerType(
-                "SlimePlugin class should have atleast one method middle_before or middle_after"
+        else:
+            self.__apply_plugin(
+                is_async=self._check_handler_type_for_route(
+                    method=method if isinstance(method, str) else method[0], path=path
+                ),
+                method=method,
+                path=path,
+                plugin_instance=plugin_instance,
             )
 
     def __apply_route(
