@@ -80,6 +80,9 @@ class BodySchema:
                 result[key]["type"] = "string"
             elif value is bool:
                 result[key]["type"] = "boolean"
+            elif value is float:
+                result[key]["type"] = "number"
+                result[key]["format"] = "double"
             elif hasattr(value, "__origin__") and (
                 value.__origin__ is list or value.__origin__ is dict
             ):
@@ -103,6 +106,8 @@ class BodySchema:
                     result[key][kind] = {"type": "boolean"}
                 elif value.__args__[index] is str:
                     result[key][kind] = {"type": "string"}
+                elif value.__args__[index] is float:
+                    result[key][kind] = {"type": "number", "format": "double"}
                 elif isinstance(value.__args__[index], type):
                     result[key][kind] = {
                         "$ref": f"#/components/schemas/{value.__args__[index].__name__}"

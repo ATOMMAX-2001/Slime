@@ -17,7 +17,7 @@ class SubItem:
 
 class User:
     name: str
-    age: int
+    age: float
     sub: dict[str, SubItem]
 
 
