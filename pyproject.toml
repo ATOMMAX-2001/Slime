@@ -6,4 +6,5 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "maturin>=1.12.4",
+    "watchdog>=6.0.0",
 ]

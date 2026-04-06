@@ -1,11 +1,14 @@
 # AUTHOR: S.ABILASH
 # Email: abinix01@gmail.com
-
 import os
 import shutil
 import subprocess as sp
 import sys
+import time
 from pathlib import Path
+
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
 
 def create_project(name: str):
@@ -67,8 +70,36 @@ if __name__ == "__main__":
     print("[*] slime run main")
 
 
-def run_project(script: Path, no_gil: bool = True):
+class RestartSlimeHandler(FileSystemEventHandler):
+    def __init__(self, path: Path, no_gil: bool) -> None:
+        self.script_path: Path = path
+        self.process = None
+        self.last_run = 0
+        self.no_gil = True
 
+    def restart(self):
+        now = time.time()
+        if now - self.last_run < 1:
+            return
+        self.last_run = now
+
+        if self.process:
+            print("INFO: File Change detected, Restarting...")
+            self.process.terminate()
+            self.process.wait(timeout=2)
+        os.environ["PYTHON_GIL"] = "0" if self.no_gil else "1"
+        command = ["uv", "run", "python", str(self.script_path)]
+        self.process = sp.Popen(command, env=os.environ.copy())
+
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+        self.restart()
+
+
+def run_project(script: Path, no_gil: bool = True, auto_reload: bool = False):
+    if auto_reload:
+        print("INFO: Watching the files", flush=True)
     script_path = Path.cwd()
     if script.suffix == ".py":
         script_path = script_path.joinpath(Path(script))
@@ -79,9 +110,26 @@ def run_project(script: Path, no_gil: bool = True):
         print(f"❌ Script '{script_path}' not found")
         sys.exit(1)
     try:
-        os.environ["PYTHON_GIL"] = "0" if no_gil else "1"
-        command = ["uv", "run", "python", script_path]
-        sp.run(command, env=os.environ.copy())
+        if auto_reload:
+            auto_handler = RestartSlimeHandler(script_path, no_gil)
+            observer = Observer()
+            observer.schedule(
+                auto_handler, path=str(script_path.parent), recursive=True
+            )
+            auto_handler.restart()
+            observer.start()
+            try:
+                observer.join()
+            except KeyboardInterrupt:
+                observer.stop()
+                observer.join()
+
+        else:
+            os.environ["PYTHON_GIL"] = "0" if no_gil else "1"
+            command = ["uv", "run", "python", script_path]
+            sp.run(command, env=os.environ.copy())
+    except KeyboardInterrupt:
+        pass
     except Exception as err:
         print("Error Running (reason)=> ", err)
 
@@ -115,7 +163,7 @@ def display_logo():
     print("   ___ \\| | | '_ ` _ \\ / _ \\ \\/  \\/ / _ \\ '_ \\ ")
     print("  ____) | | | | | | | |  __/\\  /\\  /  __/ |_) |")
     print(" |_____/|_|_|_| |_| |_|\\___| \\/  \\/ \\___|_.__/ ")
-    print("Version: 0.1.6\t\t\t Author: S.Abilash")
+    print("Version: 0.1.7\t\t\t Author: S.Abilash")
 
 
 def main():
@@ -126,6 +174,9 @@ def main():
         print("Usage:")
         print("  slime new <project_name>")
         print("  slime run <script>")
+        print("  slime rung <script>")
+        print("  slime runw <script>")
+        print("  slime rungw <script>")
         sys.exit(1)
 
     command = args[0]
@@ -137,22 +188,23 @@ def main():
 
         create_project(args[1])
 
-    elif command == "run":
+    elif command in ["run", "runw"]:
         if len(args) != 2:
             print("Usage: slime run <script>")
             sys.exit(1)
 
         parent_path = Path(args[0]).parent
         project_path = parent_path.joinpath(Path(args[1]))
-        run_project(project_path)
-    elif command == "rung":
+
+        run_project(project_path, auto_reload=command == "runw")
+    elif command in ["rung", "rungw"]:
         if len(args) != 2:
             print("Usage: slime rung <script>")
             sys.exit(1)
 
         parent_path = Path(args[0]).parent
         project_path = parent_path.joinpath(Path(args[1]))
-        run_project(project_path, no_gil=False)
+        run_project(project_path, no_gil=False, auto_reload=command == "rungw")
     elif command == "add":
         if len(args) < 2:
             print("Usage: slime add slimeweb")
@@ -163,6 +215,7 @@ def main():
             sys.exit(1)
         change_python_version(args[1])
     else:
+        print(command in ["run", "runw"], flush=True)
         print(f"Unknown command: {command}")
 
 

@@ -45,7 +45,7 @@ Hello World from slime
 - JSON / HTML / raw responses
 - Templates rendering with context
 - Static serving
-- Hot reload of templates in dev mode
+- Hot reload
 - WebSocket
 - App state
 - Compression
@@ -108,6 +108,8 @@ if __name__ == "__main__":
     slime new projectName   -> Create new project
     slime run main          -> Run slime without GIL
     slime rung main         -> Run slime with GIL
+    slime runw main         -> Run slime without GIL and watch (auto-reload)
+    slime rungw main        -> Run slime with GIL and watch (auto-reload)
     slime add packageName   -> Add lib to the project deps
     slime use python3.14    -> Change the python runtime
 ```
@@ -199,43 +201,49 @@ def hello(req, resp):
 If the request body size limit is exceeded in Slime, it returns a **400 BAD REQUEST** response. To fix this, increase the **body_size** parameter in your **route(body_size=1024*1024*30)** it's 10MB by default.This appies to route(),stream(),websocket().
 
 
+### LifeCycle
 
-### File Upload
+The lifecycle in a Slime application simply describes the order in which things happen when your app runs.
 
-In your Slime file handler, access uploaded files via the **req.file** attribute, it returns a list of **SlimeFile** objects (Refer below for SlimeFile **Api**).
+@app.start() **->** Request Lifecycle(Refer Middleware) **->** @app.end()
 
-> **Note**: For security, Slime automatically strips the original file extension and assigns a unique filename to each uploaded file.
+- It starts by calling **app.start()**
+- Then it process request lifecycle
+- Finally it call **@app.end()**
+
 
 ```python
-@app.route(path="/test", method="POST")
-def hello(req, resp):
-    file = req.file[0] # use can upload multiple files
-    print(file.filename)
-    print(file.content_type)
-    print(file.file_path)
-    print(file.file_size)
-    print(file.extension)
-    file.save(f"testing_file.{file.extension}")
-    return resp.json({"status": "ok"})
+@app.start()
+def start_app():
+    print("app has been started")
+
+@app.end()
+def end_app(args):
+    print("app has been ended with error => ",args)
 
 ```
 
 
-### Compression
+Both **app.start()** and **app.end()** are optional. When **app.end()** runs, it receives one argument, it can be None or an exception. If the app stops because of server shutdown, that exception is passed in, so you can handle cleanup or run any final logic before the app closes.
 
-Slime supports response body compression to reduce payload size and improve performance.
+
+
+### App State
+
+App state allows you to maintain shared data across requests during your app's lifecycle.
+
+Initialize app state when starting your server
 
 ```python
-from slimeweb import SlimeCompression
-@app.route(path="/",method="GET",compression=SlimeCompression.Gzip)
-def land(req,resp):
-    resp.plain("hello" * 5000)
+app.serve(app_state={"counter": 0})
 ```
+Within each handler, the current app state is automatically injected into the **SlimeRequest** object. Use these methods to interact with it:
 
-In this example, Gzip compression is enabled for the route. If the client requested for compression, Slime will automatically compress the response body before sending it. Refer **Api** for types of compression available.
+- **req.get_state(key)**, To retrieve the current value for a given key.
+- **req.update_state(key,value)**, To update the value for a given key.
 
+> **NOTE:** SlimeState is not atomic. In concurrent scenario with multiple simultaneous request, race condition may occur during state updates, Potentially leading to incorrect values. For production when working with high concurrency, consider implementing your own synchronization or use external state store.
 
-> **NOTE:** Compression body has a threshold slime will compress the body if the content size is above the threshold, to prevent  unnecessary CPU cycle.
 
 
 
@@ -283,21 +291,44 @@ You can also generate
 - Config File
 - HTML & etc..
 
-### App State
 
-App state allows you to maintain shared data across requests during your app's lifecycle.
 
-Initialize app state when starting your server
+### File Upload
+
+In your Slime file handler, access uploaded files via the **req.file** attribute, it returns a list of **SlimeFile** objects (Refer below for SlimeFile **Api**).
+
+> **Note**: For security, Slime automatically strips the original file extension and assigns a unique filename to each uploaded file.
 
 ```python
-app.serve(app_state={"counter": 0})
+@app.route(path="/test", method="POST")
+def hello(req, resp):
+    file = req.file[0] # use can upload multiple files
+    print(file.filename)
+    print(file.content_type)
+    print(file.file_path)
+    print(file.file_size)
+    print(file.extension)
+    file.save(f"testing_file.{file.extension}")
+    return resp.json({"status": "ok"})
+
 ```
-Within each handler, the current app state is automatically injected into the **SlimeRequest** object. Use these methods to interact with it:
 
-- **req.get_state(key)**, To retrieve the current value for a given key.
-- **req.update_state(key,value)**, To update the value for a given key.
+### Compression
 
-> **NOTE:** SlimeState is not atomic. In concurrent scenario with multiple simultaneous request, race condition may occur during state updates, Potentially leading to incorrect values. For production when working with high concurrency, consider implementing your own synchronization or use external state store.
+Slime supports response body compression to reduce payload size and improve performance.
+
+```python
+from slimeweb import SlimeCompression
+@app.route(path="/",method="GET",compression=SlimeCompression.Gzip)
+def land(req,resp):
+    resp.plain("hello" * 5000)
+```
+
+In this example, Gzip compression is enabled for the route. If the client requested for compression, Slime will automatically compress the response body before sending it. Refer **Api** for types of compression available.
+
+
+> **NOTE:** Compression body has a threshold slime will compress the body if the content size is above the threshold, to prevent  unnecessary CPU cycle.
+
 
 ### Middleware
 
@@ -542,7 +573,6 @@ from slimeweb import SlimeCompression #Enum
     SlimeCompression.Gzip
     SlimeCompression.Brotli
     SlimeCompression.Zstd
-
 ```
 
 ### SlimeDocs

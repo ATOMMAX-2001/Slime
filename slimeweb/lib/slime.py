@@ -187,7 +187,7 @@ class Routes:
         stream: str | None = None,
         ws: bool = False,
         compression: SlimeCompression = SlimeCompression.NoCompression,
-        body_size:int =1024*1024*10
+        body_size: int = 1024 * 1024 * 10,
     ) -> None:
         global AVAILABLE_METHOD
         if method.upper() not in AVAILABLE_METHOD:
@@ -198,7 +198,7 @@ class Routes:
         self.stream: str | None = stream
         self.ws: bool = ws
         self.compression: int = compression.value
-        self.body_size:int =body_size
+        self.body_size: int = body_size
 
     def __hash__(self) -> int:
         return hash((self.path, self.method))
@@ -237,6 +237,11 @@ class Slime:
         # to generate swagger docs user can  create
         # custom definition
         self.__docs: List[SlimeDocs] = []
+
+        # app start and end
+
+        self.__app_start: Callable | None = None
+        self.__app_end: Callable | None = None
 
     def __apply_middleware(
         self,
@@ -482,9 +487,9 @@ class Slime:
         stream: str | None,
         ws: bool,
         compression: SlimeCompression,
-        body_size: int
+        body_size: int,
     ):
-        if not isinstance(body_size,int):
+        if not isinstance(body_size, int):
             raise ValueError("body_size should be of type <int> represent bytes")
         new_route = Routes(path, method, stream, ws, compression, body_size)
 
@@ -511,7 +516,7 @@ class Slime:
         stream: str | None = None,
         ws: bool = False,
         compression: SlimeCompression = SlimeCompression.NoCompression,
-        body_size:int =1024*1024*10
+        body_size: int = 1024 * 1024 * 10,
     ) -> Callable:
         def wrapper(route_handler) -> Callable:
             if route_handler is None or not callable(route_handler):
@@ -530,7 +535,7 @@ class Slime:
                         stream=stream,
                         ws=ws,
                         compression=compression,
-                        body_size=body_size
+                        body_size=body_size,
                     )
             else:
                 if method == "*":
@@ -543,7 +548,7 @@ class Slime:
                             ws=ws,
                             path=path,
                             compression=compression,
-                            body_size=body_size
+                            body_size=body_size,
                         )
                 else:
                     self.__apply_route(
@@ -553,7 +558,7 @@ class Slime:
                         ws=ws,
                         path=path,
                         compression=compression,
-                        body_size=body_size
+                        body_size=body_size,
                     )
             return route_handler
 
@@ -565,7 +570,7 @@ class Slime:
         method: List[str] | str = "GET",
         content: str = "text/plain",
         compression: SlimeCompression = SlimeCompression.NoCompression,
-        body_size: int = 1024*1024*10
+        body_size: int = 1024 * 1024 * 10,
     ) -> Callable:
         def wrapper(stream_handler) -> Callable:
             if stream_handler is None or not callable(stream_handler):
@@ -588,7 +593,7 @@ class Slime:
                         path=path,
                         stream=content,
                         ws=False,
-                        body_size=body_size
+                        body_size=body_size,
                     )
             else:
                 self.__apply_route(
@@ -598,13 +603,15 @@ class Slime:
                     path=path,
                     stream=content,
                     ws=False,
-                    body_size=body_size
+                    body_size=body_size,
                 )
             return stream_handler
 
         return wrapper
 
-    def websocket(self, path: str = "/", method: str = "GET",body_size:int =1024*1024*10) -> Callable:
+    def websocket(
+        self, path: str = "/", method: str = "GET", body_size: int = 1024 * 1024 * 10
+    ) -> Callable:
         def wrapper(websocket_handler) -> Callable:
             if websocket_handler is None or not callable(websocket_handler):
                 raise InvalidHandler(
@@ -620,7 +627,7 @@ class Slime:
                 path=path,
                 stream=None,
                 ws=True,
-                body_size=body_size
+                body_size=body_size,
             )
             return websocket_handler
 
@@ -729,28 +736,24 @@ class Slime:
     def start(self):
         def wrapper(handler):
             if not callable(handler):
-                raise InvalidHandler(
-                    "Application start handler should be a function"
-                )
-            self.__app_start: Callable = handler
+                raise InvalidHandler("Application start handler should be a function")
+            self.__app_start = handler
             return handler
+
         return wrapper
 
     def end(self):
         def wrapper(handler):
             if not callable(handler):
-                raise InvalidHandler(
-                    "Application end handler should be a function"
-                )
-            if len(list(inspect.signature(handler).parameters)) !=1:
+                raise InvalidHandler("Application end handler should be a function")
+            if len(list(inspect.signature(handler).parameters)) != 1:
                 raise InvalidHandler(
                     "Application end handler should have one argument of type None|Exception"
                 )
-            self.__app_end: Callable = handler
+            self.__app_end = handler
             return handler
+
         return wrapper
-
-
 
     def generate_docs(self):
         api = self.__generate_docs_path()
@@ -806,13 +809,17 @@ class Slime:
 
             secret_key = secrets.token_urlsafe(30)
 
-        self.__app_start()
+        if self.__app_start is not None:
+            self.__app_start()
         import web
+
         try:
             web.init_web(self, host, port, secret_key, dev, app_state)
         except Exception as e:
-            self.__app_end(e)
+            if self.__app_end is not None:
+                self.__app_end(e)
             raise e
-        self.__app_end(None)
+        if self.__app_end is not None:
+            self.__app_end(None)
         print("Slime server is shutting down...")
         print("Finished")
