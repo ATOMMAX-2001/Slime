@@ -35,7 +35,7 @@ Hello World from slime
 
 - Python handler functions 
 - Rust powered HTTP server
-- Multiple worker pool model
+- Single Process & Multiple worker pool model
 - Sync & Async handler
 - Multipart form support
 - File uploads
@@ -49,7 +49,9 @@ Hello World from slime
 - WebSocket
 - App state
 - Compression
-- Middleware Plugin
+- Middleware plugin
+- Generate docs
+- Dynamic body read size constraint
 
 
 ---
@@ -107,7 +109,7 @@ if __name__ == "__main__":
     slime run main          -> Run slime without GIL
     slime rung main         -> Run slime with GIL
     slime add packageName   -> Add lib to the project deps
-    slime use python3.12    -> Change the python runtime
+    slime use python3.14    -> Change the python runtime
 ```
 
 
@@ -120,6 +122,7 @@ Route method contains
 - stream (content-type)
 - ws     (create websocket for this path)
 - compression (SlimeCompression.NoCompression as default)
+- body_size (10MB as default)
 
 > **NOTE:** You can define only one handler per unique route-method combination, defining multiple handlers for the same path and method will raise an error.
 
@@ -192,6 +195,8 @@ def hello(req, resp):
     print("file",req.file)
     return resp.json({"status": "ok"})
 ```
+
+If the request body size limit is exceeded in Slime, it returns a **400 BAD REQUEST** response. To fix this, increase the **body_size** parameter in your **route(body_size=1024*1024*30)** it's 10MB by default.This appies to route(),stream(),websocket().
 
 
 

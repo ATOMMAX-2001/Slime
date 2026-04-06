@@ -49,6 +49,7 @@ pub struct Route {
     pub stream: Option<String>,
     pub ws: bool,
     pub compression: u8,
+    pub body_size: usize,
     pub handler: Arc<Vec<(Py<PyAny>, bool)>>,
 }
 
@@ -60,6 +61,7 @@ impl Clone for Route {
             stream: self.stream.to_owned(),
             ws: self.ws,
             compression: self.compression,
+            body_size: self.body_size,
             handler: self.handler.clone(),
         }
     }
@@ -72,6 +74,7 @@ impl Route {
         stream: Option<String>,
         ws: bool,
         compression: u8,
+        body_size: usize,
         handler: Vec<(Py<PyAny>, bool)>,
     ) -> Self {
         Self {
@@ -80,6 +83,7 @@ impl Route {
             stream,
             ws,
             compression,
+            body_size,
             handler: Arc::new(handler),
         }
     }
@@ -230,6 +234,7 @@ impl SlimeServer {
             let stream: Option<String> = key.getattr("stream")?.extract()?;
             let ws: bool = key.getattr("ws")?.extract()?;
             let compression: u8 = key.getattr("compression")?.extract()?;
+            let body_size: usize = key.getattr("body_size")?.extract()?;
             let handler = value.cast::<PyDict>()?;
             let mut handlers: Vec<(Py<PyAny>, bool)> = Vec::with_capacity(3);
 
@@ -286,7 +291,15 @@ impl SlimeServer {
                     }
                 }
             }
-            routes_collection.push(Route::new(path, method, stream, ws, compression, handlers));
+            routes_collection.push(Route::new(
+                path,
+                method,
+                stream,
+                ws,
+                compression,
+                body_size,
+                handlers,
+            ));
         }
         self.routes = routes_collection;
         Ok(())
@@ -304,6 +317,7 @@ impl SlimeServer {
             let stream_content = route.stream;
             let handler = route.handler.clone();
             let compression = route.compression;
+            let body_size = route.body_size;
             let worker_txs = self.worker_txs.clone();
             let request_counter = self.request_counter.clone();
             let worker_count = worker_txs.len();
@@ -355,9 +369,15 @@ impl SlimeServer {
                         .and_then(|value| value.to_str().ok())
                         .unwrap_or("");
 
-                    let body = match to_bytes(raw_body, 1024 * 1024 * 10).await {
+                    let body = match to_bytes(raw_body, body_size).await {
                         Ok(bod) => bod,
-                        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+                        Err(_) => {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                "The maximum request body size has been exceeded",
+                            )
+                                .into_response();
+                        }
                     };
                     let mut json_body: Option<serde_json::Value> = None;
                     let mut form_body: Option<HashMap<String, String>> = None;

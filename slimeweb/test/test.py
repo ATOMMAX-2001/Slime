@@ -106,6 +106,20 @@ def hello(req, resp):
     # return resp.html(html)
 
 
+@app.route("/upload",method="POST",body_size=1024*1024*30)
+def upload_test(req,resp):
+    result = len(req.body)
+    return resp.plain(str(result))
+
+@app.start()
+def start_app():
+    print("app has been started")
+
+@app.end()
+def end_app(args):
+    print("app has been ended")
+
+
 if __name__ == "__main__":
     app.use(SampleMiddle, method=["GET", "POST"])
 

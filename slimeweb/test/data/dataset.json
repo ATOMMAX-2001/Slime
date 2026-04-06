@@ -1,0 +1,13 @@
+{
+  "id": 1,
+  "name": "Alpha Widget",
+  "category": "electronics",
+  "price": 29.99,
+  "quantity": 5,
+  "active": true,
+  "tags": ["fast", "new"],
+  "rating": {
+    "score": 4.2,
+    "count": 127
+  }
+}
