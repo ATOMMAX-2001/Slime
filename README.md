@@ -197,7 +197,7 @@ def hello(req, resp):
 
 ### File Upload
 
-In your Slime file handler, access uploaded files via the **req.file** attribute, it returns a list of **SlimeFile** objects (Refer below for SlimeFile **api**).
+In your Slime file handler, access uploaded files via the **req.file** attribute, it returns a list of **SlimeFile** objects (Refer below for SlimeFile **Api**).
 
 > **Note**: For security, Slime automatically strips the original file extension and assigns a unique filename to each uploaded file.
 
@@ -399,6 +399,57 @@ def chatty(req, resp):
     resp.on_close(close_me)
 ```
 
+### Swagger Docs
+
+Slime can automatically generate Swagger documentation and serve it at the **/docs** endpoint when your server is running in development mode **(dev=True)**.
+
+To enable this, you simply need to define your documentation using the **@docs()** decorator.
+
+```python
+
+
+class SubItem:
+    is_item: bool
+    how_long: int
+
+
+class User:
+    name: str
+    age: float
+    sub: dict[str, SubItem]
+
+
+
+ @app.docs(
+    title="just checking",
+    description="Simple landing page",
+    response_type=SlimeResponseType.PlainResponse,
+    schema=SlimeSchema(
+        body=BodySchema(schema_name=User), query=[QuerySchema(name="name", type=str)]
+    ),
+)
+@app.route("/", method=["GET"])
+def land(req, resp):
+    print(req.header)
+    if req.method == "GET":
+        resp.plain("hello" * 3000)
+    else:
+        resp.json({"status": "ok"})
+
+```
+In this example, documentation is attached to a route by providing details like **title, description, response_type, and schema** through the @docs() decorator.
+
+
+For the schema, you can define both:
+
+- **BodySchema** (Request payload)
+- **QuerySchema**
+
+These are available from the slimeweb package. Please check the **Api** reference for more details on how to define schemas.
+
+> **NOTE:** You can define only one @docs() to route only, more than one can raise error.
+
+
 ## Api
 
 ###  Slime Request
@@ -488,6 +539,60 @@ from slimeweb import SlimeCompression #Enum
     SlimeCompression.Zstd
 
 ```
+
+### SlimeDocs
+```python
+from slimeweb import SlimeResponseType,SlimeSchema,BodySchema,QuerySchema
+
+@docs(
+    title: str= "",
+    description: str="",
+    response_type: SlimeResponseType = SlimeResponseType.JSON
+    schema: SlimeSchema =SlimeSchema()
+)
+```
+
+### SlimeResponseType
+
+```python 
+from slimeweb import SlimeResponseType #Enum 
+    SlimeResponseType.PlainResponse 
+    SlimeResponseType.JsonResponse 
+    SlimeResponseType.HTMLResponse 
+    SlimeResponseType.StreamResponse 
+    SlimeResponseType.WebSocketResponse 
+    SlimeResponseType.CsvResponse
+    SlimeResponseType.XmlResponse
+    SlimeResponseType.BinaryResponse
+```
+### SlimeSchema
+
+```python
+from slimeweb import SlimeSchema
+
+SlimeSchema(
+    query: list[QuerySchema]|None,
+    body: BodySchema|None
+)
+
+```
+
+### QuerySchema & BodySchema
+
+```python
+from slimeweb import QuerySchema,BodySchema
+
+  BodySchema(schema_name: class)
+  
+  QuerySchema(
+      name: str,
+      type: str|int|bool,
+      requiured: bool =True
+  )
+    
+```
+
+
 
 ### Benchmark
 [BenchMark Code with no-gil example:](https://github.com/Abilash2001/SlimeWeb/)
