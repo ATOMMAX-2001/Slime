@@ -50,6 +50,7 @@ Hello World from slime
 - App state
 - Compression
 - Middleware Plugin
+- Generate docs
 
 
 ---
