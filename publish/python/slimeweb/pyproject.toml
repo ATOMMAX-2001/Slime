@@ -1,10 +1,27 @@
 [project]
 name = "SlimeWeb"
-version = "0.1.4"
+version = "0.1.6"
 description = "A Simple fast lightweight webframework lib for python"
+keywords = ["web framework", "python web", "lightweight", "async", "backend","sync","rust"]
 authors = [{ name= "S.ABILASH", email="abinix01@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.12"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Rust",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Framework :: AsyncIO",
+  "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+]
+
+[project.urls]
+Repository = "https://github.com/ATOMMAX-2001/Slime"
+Issues = "https://github.com/ATOMMAX-2001/Slime/issues"
+
+
+
 
 [project.scripts]
 slime = "slimeweb.cli:main"
