@@ -145,15 +145,11 @@ def add_lib(lib: list):
         )
 
 
-def change_python_version(version):
+def remove_lib(name: str):
     try:
-        sp.run(["uv", "--native-tls", "run", "python", version], check=True)
+        sp.run(["uv", "--native-tls", "remove", name], check=True)
     except Exception:
-        print(f"Unable to use {version}, No such python runtime available")
-        print(
-            "These are currently available right now, please choose one of the runtime"
-        )
-        sp.run(["uv", "--native-tls", "python", "list"])
+        print("Unable to remove the package.")
 
 
 def display_logo():
@@ -209,11 +205,11 @@ def main():
         if len(args) < 2:
             print("Usage: slime add slimeweb")
         add_lib(args[1:])
-    elif command == "use":
+    elif command == "remove":
         if len(args) != 2:
-            print("Usage: slime use python3.12")
+            print("Usage: slime remove slimeweb")
             sys.exit(1)
-        change_python_version(args[1])
+        remove_lib(args[1])
     else:
         print(command in ["run", "runw"], flush=True)
         print(f"Unknown command: {command}")
