@@ -36,19 +36,22 @@ async def chatty(req, resp):
     resp.on_message(read_me)
 
     def close_me():
-        pass
+        print("closed")
 
+    def error_me(mes):
+        print(mes)
+
+    resp.on_error(error_me)
     resp.on_close(close_me)
 
 
 @app.route(path="/plain", method="GET")
 def land_plain(req, resp):
-    return resp.plain("hello world")
+    return resp.plain("ok")
 
 
 @app.route(path="/plain", method="POST")
 def land_plain_post(req, resp):
-    print(req.body)
     return resp.plain("hello world from post")
 
 
@@ -136,6 +139,6 @@ def end_app(args):
 
 
 if __name__ == "__main__":
-    app.use(SampleMiddle(), method=["GET", "POST"])
+    # app.use(SampleMiddle(), method=["GET", "POST"])
 
-    app.serve(app_state={"counter": 0}, dev=True)
+    app.serve(app_state={"counter": 0})

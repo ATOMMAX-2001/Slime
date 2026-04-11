@@ -1,7 +1,6 @@
 import pydantic
 
 import web
-from slimeweb.lib.slime import SlimeException
 
 
 def validate_me(self, obj, raise_err=True):

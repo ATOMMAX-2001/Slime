@@ -820,6 +820,7 @@ class Slime:
         secret_key: str | None = None,
         dev: bool = False,
         app_state: Dict[str, Any] = {},
+        workers: int = 0,
     ) -> None:
         if dev and len(self.__docs) != 0:
             self.generate_docs()
@@ -829,15 +830,17 @@ class Slime:
 
             secret_key = secrets.token_urlsafe(30)
 
+        if not isinstance(workers, int):
+            raise ValueError("worker needs to be in int type")
         if self.__app_start is not None:
             self.__app_start()
-
-        # import web_extras
 
         from . import web_extras
 
         try:
-            web_extras.web.init_web(self, host, port, secret_key, dev, app_state)  # type: ignore
+            web_extras.web.init_web(
+                self, host, port, secret_key, dev, app_state, workers
+            )
         except Exception as e:
             if self.__app_end is not None:
                 self.__app_end(e)
