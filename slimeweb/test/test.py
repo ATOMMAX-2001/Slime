@@ -1,11 +1,23 @@
 import asyncio
 
 from lib import slime
+from pydantic import BaseModel
 
 app = slime.Slime(__file__)
 
 
-class SampleMiddle:
+class Student(BaseModel):
+    name: str
+    age: int
+    marks: int
+
+
+class StudError(slime.SlimeException):
+    def __init__(self, status=400, message="An unknown error was occurred") -> None:
+        super().__init__(status, message)
+
+
+class SampleMiddle(slime.SlimeMiddleware):
     def middle_before(self, req, resp):
         resp.set_header("plugin_before", "works")
 
@@ -54,8 +66,9 @@ def land_render(req, resp):
     return resp.html(html)
 
 
-@app.route(path="/", method="GET")
+@app.route(path="/", method=["GET", "POST"])
 def land(req, resp):
+    req.validate(Student)
     counter = req.get_state("counter")
     html = req.render(
         "hello.html", **{"name": "abilash", "age": 24, "counter": counter}
@@ -106,14 +119,16 @@ def hello(req, resp):
     # return resp.html(html)
 
 
-@app.route("/upload",method="POST",body_size=1024*1024*30)
-def upload_test(req,resp):
+@app.route("/upload", method="POST", body_size=1024 * 1024 * 30)
+def upload_test(req, resp):
     result = len(req.body)
     return resp.plain(str(result))
+
 
 @app.start()
 def start_app():
     print("app has been started")
+
 
 @app.end()
 def end_app(args):
@@ -121,6 +136,6 @@ def end_app(args):
 
 
 if __name__ == "__main__":
-    app.use(SampleMiddle, method=["GET", "POST"])
+    app.use(SampleMiddle(), method=["GET", "POST"])
 
     app.serve(app_state={"counter": 0}, dev=True)

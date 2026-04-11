@@ -13,7 +13,7 @@ use axum::{
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::StreamExt;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList};
 use pyo3::{prelude::*, types::PyTuple};
 use rayon::{ThreadPoolBuilder, yield_now};
 
@@ -688,10 +688,10 @@ async fn websocket_handler(
             let (mut sender, mut receiver) = socket.split();
 
             // send message
-            tok_hand.spawn(async move {
+            let send_message_handler = tok_hand.spawn(async move {
                 while let Some(msg) = ws_rx.recv().await {
                     if let Err(err) = sender.send(Message::Binary(msg)).await {
-                        println!("Websocket ERROR: {}", err.to_string());
+                        println!("Websocket send ERROR: {}", err.to_string());
                         break;
                     }
                 }
@@ -728,30 +728,62 @@ async fn websocket_handler(
             if let Ok(Ok(resp)) = worker_resp.await {
                 // recevie message
                 tok_hand.spawn(async move {
+                    let error_handler =
+                        |err: PyErr, handler: Arc<Option<Py<PyAny>>>, py: &Python| -> bool {
+                            if let Some(error_handler) = &(*handler) {
+                                if error_handler.call1(*py, (err,)).is_err() {
+                                    return false;
+                                }
+                                return true;
+                            }
+                            return true;
+                        };
                     while let Some(Ok(msg)) = receiver.next().await {
-                        match msg {
+                        Python::attach(|py| match msg {
                             Message::Binary(data) => {
                                 if let Some(handler_func) = &(*resp.on_message_handler) {
-                                    let _ = Python::attach(|py| {
-                                        handler_func.call1(py, (data.to_vec(),))
-                                    });
+                                    if let Err(err) =
+                                        handler_func.call1(py, (PyBytes::new(py, &data),))
+                                    {
+                                        error_handler(err, resp.on_error_handler.clone(), &py);
+                                    }
                                 }
                             }
                             Message::Text(data) => {
                                 if let Some(handler_func) = &(*resp.on_message_handler) {
-                                    let _ = Python::attach(|py| {
-                                        handler_func.call1(py, (data.as_str(),))
-                                    });
+                                    if let Err(err) = handler_func.call1(py, (data.as_str(),)) {
+                                        error_handler(err, resp.on_error_handler.clone(), &py);
+                                    }
                                 }
                             }
                             Message::Close(_) => {
+                                send_message_handler.abort();
                                 if let Some(handler_func) = &(*resp.on_close_handler) {
-                                    let _ = Python::attach(|py| handler_func.call0(py));
+                                    if let Err(err) = handler_func.call0(py) {
+                                        error_handler(err, resp.on_error_handler.clone(), &py);
+                                    }
                                 }
                                 state.remove_conn(id);
                             }
+                            Message::Ping(data) => {
+                                if let Some(handler_func) = &(*resp.on_message_handler) {
+                                    if let Err(err) =
+                                        handler_func.call1(py, (PyBytes::new(py, &data),))
+                                    {
+                                        if let Some(handler_func) = &(*resp.on_close_handler) {
+                                            if let Err(err) = handler_func.call1(py, (err,)) {
+                                                error_handler(
+                                                    err,
+                                                    resp.on_error_handler.clone(),
+                                                    &py,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             _ => {}
-                        }
+                        });
                     }
                 });
             }
@@ -897,6 +929,7 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
                             on_message_handler: Arc::new(None),
                             on_close_handler: Arc::new(None),
                             on_error_handler: Arc::new(None),
+                            on_ping_handler: Arc::new(None),
                         },
                     ),
                 )
@@ -1020,6 +1053,7 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler:
                             on_message_handler: Arc::new(None),
                             on_close_handler: Arc::new(None),
                             on_error_handler: Arc::new(None),
+                            on_ping_handler: Arc::new(None),
                         },
                     );
                     match (Py::new(py, req.request), response_obj) {

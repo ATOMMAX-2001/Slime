@@ -24,6 +24,20 @@ class SlimeCompression(Enum):
     Zstd = 3
 
 
+class SlimeMiddleware:
+    def middle_before(self, req, resp):
+        pass
+
+    def middle_after(self, req, resp):
+        pass
+
+
+class SlimeException(Exception):
+    def __init__(self, status=400, message="An unknown error occurred") -> None:
+        self.status = status
+        self.message = message
+
+
 class SlimeResponseType(Enum):
     PlainResponse = 0
     JsonResponse = 1
@@ -397,7 +411,11 @@ class Slime:
         return False
 
     def __apply_plugin(
-        self, is_async: bool, path: str, method: str | List[str], plugin_instance: Type
+        self,
+        is_async: bool,
+        path: str,
+        method: str | List[str],
+        plugin_instance: SlimeMiddleware,
     ):
         found: bool = False
 
@@ -432,12 +450,14 @@ class Slime:
                 "SlimePlugin class should have atleast one method middle_before or middle_after"
             )
 
-    def use(self, obj: Type, method: List[str] | str = "*", path="*") -> None:
-        if not isinstance(obj, type):
-            raise InvalidMiddlewareHandlerType(
-                'SlimePlugin has to be type class with "middle_before" or "middle_after" method'
+    def use(
+        self, plugin_instance: Any, method: List[str] | str = "*", path="*"
+    ) -> None:
+        if not isinstance(plugin_instance, SlimeMiddleware):
+            print(type(plugin_instance))
+            raise ValueError(
+                "Not a valid plugin definition, It has to be derived from SlimeMiddleware class"
             )
-        plugin_instance = obj()
         if path == "*":
             route_details = {
                 (route.path, route.method): handler["handler"][0][1]  # type: ignore
@@ -811,10 +831,13 @@ class Slime:
 
         if self.__app_start is not None:
             self.__app_start()
-        import web
+
+        # import web_extras
+
+        from . import web_extras
 
         try:
-            web.init_web(self, host, port, secret_key, dev, app_state)
+            web_extras.web.init_web(self, host, port, secret_key, dev, app_state)  # type: ignore
         except Exception as e:
             if self.__app_end is not None:
                 self.__app_end(e)

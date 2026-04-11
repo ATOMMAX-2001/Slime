@@ -292,6 +292,7 @@ pub struct SlimeWebSocketResponse {
     pub on_message_handler: Arc<Option<Py<PyAny>>>,
     pub on_close_handler: Arc<Option<Py<PyAny>>>,
     pub on_error_handler: Arc<Option<Py<PyAny>>>,
+    pub on_ping_handler: Arc<Option<Py<PyAny>>>,
 }
 
 impl Clone for SlimeWebSocketResponse {
@@ -301,6 +302,7 @@ impl Clone for SlimeWebSocketResponse {
             on_message_handler: self.on_message_handler.clone(),
             on_close_handler: self.on_close_handler.clone(),
             on_error_handler: self.on_error_handler.clone(),
+            on_ping_handler: self.on_ping_handler.clone(),
         }
     }
 }
