@@ -105,13 +105,13 @@ if __name__ == "__main__":
 ### Slime Cli
 
 ```bash
-    slime new projectName   -> Create new project
-    slime run main          -> Run slime without GIL
-    slime rung main         -> Run slime with GIL
-    slime runw main         -> Run slime without GIL and watch (auto-reload)
-    slime rungw main        -> Run slime with GIL and watch (auto-reload)
-    slime add packageName   -> Add lib to the project deps
-    slime use python3.14    -> Change the python runtime
+    slime new projectName    -> Create new project
+    slime run main           -> Run slime without GIL
+    slime rung main          -> Run slime with GIL
+    slime runw main          -> Run slime without GIL and watch (auto-reload)
+    slime rungw main         -> Run slime with GIL and watch (auto-reload)
+    slime add packageName    -> Add lib to the project deps
+    slime remove packageName -> Remove lib from the project deps
 ```
 
 
@@ -464,7 +464,7 @@ class User:
         body=BodySchema(schema_name=User), query=[QuerySchema(name="name", type=str)]
     ),
 )
-@app.route("/", method=["GET"])
+@app.route("/", method=["GET","POST"])
 def land(req, resp):
     print(req.header)
     if req.method == "GET":
