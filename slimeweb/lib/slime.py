@@ -484,7 +484,7 @@ class Slime:
                         if route[1] in method:
                             self.__apply_plugin(
                                 is_async=is_async,
-                                method=method,
+                                method=route[1],
                                 path=route[0],
                                 plugin_instance=plugin_instance,
                             )

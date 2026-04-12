@@ -163,7 +163,9 @@ impl SlimeServer {
         let env = SlimeServer::get_template_environment(&filename);
         let local_event_loop = Python::attach(|py| {
             let asyncio_mod = py.import("asyncio").expect("Need asyncio lib ");
+            #[cfg(target_os = "linux")]
             let uv_loop_mod = py.import("uvloop").expect("Need uvloop lib");
+            #[cfg(target_os = "linux")]
             uv_loop_mod
                 .call_method0("install")
                 .expect("Failed to init uvloop");
