@@ -544,7 +544,7 @@ class Slime:
         ws: bool = False,
         compression: SlimeCompression = SlimeCompression.NoCompression,
         body_size: int = 1024 * 1024 * 10,
-        plugin: SlimeMiddleware | None = None,
+        plugin: SlimeMiddleware | List[SlimeMiddleware] | None = None,
     ) -> Callable:
         def wrapper(route_handler) -> Callable:
             if route_handler is None or not callable(route_handler):
@@ -589,7 +589,12 @@ class Slime:
                         body_size=body_size,
                     )
             if plugin is not None:
-                self.use(method=method, path=path, plugin_instance=plugin)
+                if not isinstance(plugin, list) and not isinstance(
+                    plugin, SlimeMiddleware
+                ):
+                    raise ValueError("Plugin is a list type")
+                for plug in plugin if isinstance(plugin, list) else [plugin]:
+                    self.use(method=method, path=path, plugin_instance=plug)
             return route_handler
 
         return wrapper
@@ -601,6 +606,7 @@ class Slime:
         content: str = "text/plain",
         compression: SlimeCompression = SlimeCompression.NoCompression,
         body_size: int = 1024 * 1024 * 10,
+        plugin: SlimeMiddleware | List[SlimeMiddleware] | None = None,
     ) -> Callable:
         def wrapper(stream_handler) -> Callable:
             if stream_handler is None or not callable(stream_handler):
@@ -647,12 +653,23 @@ class Slime:
                     ws=False,
                     body_size=body_size,
                 )
+            if plugin is not None:
+                if not isinstance(plugin, list) and not isinstance(
+                    plugin, SlimeMiddleware
+                ):
+                    raise ValueError("Plugin is a list type")
+                for plug in plugin if isinstance(plugin, list) else [plugin]:
+                    self.use(method=method, path=path, plugin_instance=plug)
             return stream_handler
 
         return wrapper
 
     def websocket(
-        self, path: str = "/", method: str = "*", body_size: int = 1024 * 1024 * 10
+        self,
+        path: str = "/",
+        method: str = "*",
+        body_size: int = 1024 * 1024 * 10,
+        plugin: SlimeMiddleware | List[SlimeMiddleware] | None = None,
     ) -> Callable:
         def wrapper(websocket_handler) -> Callable:
             if websocket_handler is None or not callable(websocket_handler):
@@ -696,6 +713,13 @@ class Slime:
                     ws=True,
                     body_size=body_size,
                 )
+            if plugin is not None:
+                if not isinstance(plugin, list) and not isinstance(
+                    plugin, SlimeMiddleware
+                ):
+                    raise ValueError("Plugin is a list type")
+                for plug in plugin if isinstance(plugin, list) else [plugin]:
+                    self.use(method=method, path=path, plugin_instance=plug)
             return websocket_handler
 
         return wrapper
