@@ -1,6 +1,7 @@
 import asyncio
 
 from lib import slime
+from lib.plugin import Cors
 from pydantic import BaseModel
 
 app = slime.Slime(__file__)
@@ -10,11 +11,6 @@ class Student(BaseModel):
     name: str
     age: int
     marks: int
-
-
-class StudError(slime.SlimeException):
-    def __init__(self, status=400, message="An unknown error was occurred") -> None:
-        super().__init__(status, message)
 
 
 class SampleMiddle(slime.SlimeMiddleware):
@@ -55,9 +51,9 @@ def land_plain_post(req, resp):
     return resp.plain("hello world from post")
 
 
-# @app.route(path="/json", method="GET")
-# def land_json(req, resp):
-#     return resp.json({"name": "abilash", "slimeversion": "V0.1.3"})
+@app.route(path="/json", plugin=Cors())
+def land_json(req, resp):
+    return resp.json({"name": "abilash", "slimeversion": "V0.1.3"})
 
 
 # @app.route(path="/render", method="GET")
@@ -139,6 +135,5 @@ def land_plain_post(req, resp):
 
 
 if __name__ == "__main__":
-    app.use(SampleMiddle())
-
+    app.use(SampleMiddle(), method=["GET", "POST"])
     app.serve(app_state={"counter": 0}, dev=True)

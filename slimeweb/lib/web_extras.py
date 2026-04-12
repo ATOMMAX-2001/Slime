@@ -26,16 +26,3 @@ def validate_me(self, obj, raise_err=True):
 
 
 web.SlimeRequest.validate = validate_me  # type: ignore
-
-
-def send_exception(self, custom_error: SlimeException):
-    if not isinstance(custom_error, SlimeException):
-        raise ValueError(
-            "SlimeException has to be derived and need instance of the custom error"
-        )
-    if custom_error.message is not None:
-        raise ValueError("SlimeException message attribute is undefined")
-    return self.json({"status": custom_error.status, "message": custom_error.message})
-
-
-web.SlimeResponse.exception = send_exception  # type: ignore

@@ -32,12 +32,6 @@ class SlimeMiddleware:
         pass
 
 
-class SlimeException(Exception):
-    def __init__(self, status=400, message="An unknown error occurred") -> None:
-        self.status = status
-        self.message = message
-
-
 class SlimeResponseType(Enum):
     PlainResponse = 0
     JsonResponse = 1
@@ -454,7 +448,6 @@ class Slime:
         self, plugin_instance: Any, method: List[str] | str = "*", path="*"
     ) -> None:
         if not isinstance(plugin_instance, SlimeMiddleware):
-            print(type(plugin_instance))
             raise ValueError(
                 "Not a valid plugin definition, It has to be derived from SlimeMiddleware class"
             )
@@ -490,14 +483,28 @@ class Slime:
                             )
 
         else:
-            self.__apply_plugin(
-                is_async=self._check_handler_type_for_route(
-                    method=method if isinstance(method, str) else method[0], path=path
-                ),
-                method=method,
-                path=path,
-                plugin_instance=plugin_instance,
-            )
+            if method == "*":
+                global AVAILABLE_METHOD
+                for method_all in AVAILABLE_METHOD:
+                    self.__apply_plugin(
+                        is_async=self._check_handler_type_for_route(
+                            method=method_all,
+                            path=path,
+                        ),
+                        method=method_all,
+                        path=path,
+                        plugin_instance=plugin_instance,
+                    )
+            else:
+                self.__apply_plugin(
+                    is_async=self._check_handler_type_for_route(
+                        method=method if isinstance(method, str) else method[0],
+                        path=path,
+                    ),
+                    method=method,
+                    path=path,
+                    plugin_instance=plugin_instance,
+                )
 
     def __apply_route(
         self,
@@ -532,11 +539,12 @@ class Slime:
     def route(
         self,
         path: str = "/",
-        method: str | List[str] = "GET",
+        method: str | List[str] = "*",
         stream: str | None = None,
         ws: bool = False,
         compression: SlimeCompression = SlimeCompression.NoCompression,
         body_size: int = 1024 * 1024 * 10,
+        plugin: SlimeMiddleware | None = None,
     ) -> Callable:
         def wrapper(route_handler) -> Callable:
             if route_handler is None or not callable(route_handler):
@@ -580,6 +588,8 @@ class Slime:
                         compression=compression,
                         body_size=body_size,
                     )
+            if plugin is not None:
+                self.use(method=method, path=path, plugin_instance=plugin)
             return route_handler
 
         return wrapper
@@ -587,7 +597,7 @@ class Slime:
     def stream(
         self,
         path: str = "/",
-        method: List[str] | str = "GET",
+        method: List[str] | str = "*",
         content: str = "text/plain",
         compression: SlimeCompression = SlimeCompression.NoCompression,
         body_size: int = 1024 * 1024 * 10,
@@ -615,6 +625,18 @@ class Slime:
                         ws=False,
                         body_size=body_size,
                     )
+            elif method == "*":
+                global AVAILABLE_METHOD
+                for all_method in AVAILABLE_METHOD:
+                    self.__apply_route(
+                        compression=compression,
+                        handler=stream_handler,
+                        method=all_method,
+                        path=path,
+                        stream=content,
+                        ws=False,
+                        body_size=body_size,
+                    )
             else:
                 self.__apply_route(
                     compression=compression,
@@ -630,7 +652,7 @@ class Slime:
         return wrapper
 
     def websocket(
-        self, path: str = "/", method: str = "GET", body_size: int = 1024 * 1024 * 10
+        self, path: str = "/", method: str = "*", body_size: int = 1024 * 1024 * 10
     ) -> Callable:
         def wrapper(websocket_handler) -> Callable:
             if websocket_handler is None or not callable(websocket_handler):
@@ -640,15 +662,40 @@ class Slime:
             setattr(websocket_handler, "__path", path)
             setattr(websocket_handler, "__method", method)
             setattr(websocket_handler, "__set_docs", False)
-            self.__apply_route(
-                compression=SlimeCompression.NoCompression,
-                handler=websocket_handler,
-                method=method,
-                path=path,
-                stream=None,
-                ws=True,
-                body_size=body_size,
-            )
+
+            if isinstance(method, list):
+                for method_col in dict.fromkeys(method):
+                    self.__apply_route(
+                        compression=SlimeCompression.NoCompression,
+                        handler=websocket_handler,
+                        method=method_col,
+                        path=path,
+                        stream=None,
+                        ws=True,
+                        body_size=body_size,
+                    )
+            elif method == "*":
+                global AVAILABLE_METHOD
+                for all_method in AVAILABLE_METHOD:
+                    self.__apply_route(
+                        compression=SlimeCompression.NoCompression,
+                        handler=websocket_handler,
+                        method=all_method,
+                        path=path,
+                        stream=None,
+                        ws=True,
+                        body_size=body_size,
+                    )
+            else:
+                self.__apply_route(
+                    compression=SlimeCompression.NoCompression,
+                    handler=websocket_handler,
+                    method=method,
+                    path=path,
+                    stream=None,
+                    ws=True,
+                    body_size=body_size,
+                )
             return websocket_handler
 
         return wrapper
