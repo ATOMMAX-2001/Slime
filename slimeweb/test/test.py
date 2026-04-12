@@ -42,7 +42,8 @@ class SampleMiddle(slime.SlimeMiddleware):
 
 
 @app.route(path="/plain", method="GET")
-async def land_plain(req, resp):
+def land_plain(req, resp):
+    # await asyncio.sleep(1)
     return resp.plain("ok")
 
 
@@ -135,5 +136,5 @@ def land_json(req, resp):
 
 
 if __name__ == "__main__":
-    app.use(SampleMiddle(), method=["GET", "POST"])
-    app.serve(app_state={"counter": 0}, dev=True)
+    # app.use(SampleMiddle(), method=["GET", "POST"])
+    app.serve(app_state={"counter": 0})
