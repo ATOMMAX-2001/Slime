@@ -164,11 +164,27 @@ impl SlimeServer {
         let local_event_loop = Python::attach(|py| {
             let asyncio_mod = py.import("asyncio").expect("Need asyncio lib ");
             #[cfg(target_os = "linux")]
-            let uv_loop_mod = py.import("uvloop").expect("Need uvloop lib");
-            #[cfg(target_os = "linux")]
-            uv_loop_mod
-                .call_method0("install")
-                .expect("Failed to init uvloop");
+            {
+                let uv_loop_mod = py.import("uvloop").expect("Need uvloop lib");
+
+                let policy = uv_loop_mod
+                    .getattr("EventLoopPolicy")
+                    .expect("Cant able to fetch policy")
+                    .call0()
+                    .expect("Cant able to fetch policy");
+
+                asyncio_mod
+                    .call_method1("set_event_loop_policy", (policy,))
+                    .expect("failed to set async loop");
+
+                let python_event_loop = asyncio_mod
+                    .call_method0("new_event_loop")
+                    .expect("Failed to create new event loop");
+
+                asyncio_mod
+                    .call_method1("set_event_loop", (&python_event_loop,))
+                    .expect("Failed to set event loop");
+            }
             let python_event_loop = match asyncio_mod.call_method0("get_running_loop") {
                 Ok(event_loop) => event_loop,
                 Err(_) => {
@@ -642,6 +658,7 @@ impl SlimeServer {
                     }
                     _ => {}
                 }
+                new_compression = new_compression.quality(tower_http::CompressionLevel::Best);
                 method_router = method_router.layer(new_compression);
             }
 
@@ -810,7 +827,7 @@ pub fn spawn_python_workers(
     for _ in 0..worker_count {
         let runtime_handler_clone = runtime_handler.clone();
         let (tx, rx) = mpsc::channel::<PyRequestWorker>(1024 * 1024 * 10);
-        worker_txs.push(tx.clone());
+        worker_txs.push(tx);
         pool.spawn(move || handle_python_call(rx, runtime_handler_clone.clone()));
     }
     return Arc::new(worker_txs);
