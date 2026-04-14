@@ -1,3 +1,4 @@
+use axum::{body::Body, response::Response};
 use pyo3::prelude::*;
 use pyo3_async_runtimes::{self as py_asyncio, TaskLocals};
 use std::sync::Arc;
@@ -30,10 +31,7 @@ pub async fn handle_async_handler(
                     if let Err(err) = co_fut.await {
                         let _ = req.response.send(Err(err));
                     } else {
-                        let _ = Python::attach(|py| {
-                            req.response
-                                .send(Ok(response_py.unwrap().borrow(py)._into_response()))
-                        });
+                        let _ = req.response.send(Ok(Response::new(Body::empty())));
                     }
                 }
                 Err(err) => {

@@ -3,10 +3,9 @@ use std::{collections::HashMap, io};
 use axum::{
     body::Body,
     http::{
-        HeaderValue, StatusCode,
+        HeaderValue, Response, StatusCode,
         header::{CONTENT_TYPE, SERVER, SET_COOKIE},
     },
-    response::Response,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
