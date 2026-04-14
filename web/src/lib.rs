@@ -25,6 +25,7 @@ pub fn init_web(
     is_dev: bool,
     app_states: Py<PyDict>,
     workers: usize,
+    async_pipeline: Py<PyAny>,
 ) -> PyResult<()> {
     println!("Initializing...");
     let slime_obj_bound = slime_obj.bind(py);
@@ -65,6 +66,7 @@ pub fn init_web(
         is_dev,
         runtime_handler,
         app_states,
+        async_pipeline,
     );
 
     server.load_routes(routes)?;

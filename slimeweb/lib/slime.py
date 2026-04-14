@@ -910,7 +910,14 @@ class Slime:
 
         try:
             web_extras.web.init_web(
-                self, host, port, secret_key, dev, app_state, workers
+                self,
+                host,
+                port,
+                secret_key,
+                dev,
+                app_state,
+                workers,
+                web_extras.slime_async_pipeline,
             )
         except Exception as e:
             if self.__app_end is not None:

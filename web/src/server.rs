@@ -15,7 +15,6 @@ use futures_util::StreamExt;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use pyo3::{prelude::*, types::PyTuple};
 use rayon::{ThreadPoolBuilder, yield_now};
-use socket2::{Domain, Socket, Type};
 
 use axum::extract::Path;
 use minijinja::{AutoEscape, Environment, path_loader};
@@ -147,6 +146,7 @@ pub struct SlimeServer {
     tokio_handler: tokio::runtime::Handle,
     event_loop_task: TaskLocals,
     app_states: SlimeState,
+    async_pipeline: Arc<Py<PyAny>>,
 }
 
 impl SlimeServer {
@@ -159,6 +159,7 @@ impl SlimeServer {
         is_dev: bool,
         tokio_runtime_handler: tokio::runtime::Handle,
         app_states: Py<PyDict>,
+        async_pipeline: Py<PyAny>,
     ) -> SlimeServer {
         let env = SlimeServer::get_template_environment(&filename);
         let local_event_loop = Python::attach(|py| {
@@ -219,6 +220,7 @@ impl SlimeServer {
             tokio_handler: tokio_runtime_handler,
             event_loop_task: local_event_loop,
             app_states: SlimeState::new(app_states),
+            async_pipeline: Arc::new(async_pipeline),
         }
     }
     // pub async fn new_worker(&mut self) {
@@ -357,6 +359,7 @@ impl SlimeServer {
             } else {
                 "http"
             };
+            let async_pipeline = self.async_pipeline.clone();
             let method_copy = method.to_owned();
             let path_copy = path.to_owned();
             let process_request = move |ConnectInfo(client): ConnectInfo<SocketAddr>,
@@ -519,6 +522,7 @@ impl SlimeServer {
                                     slime_request,
                                     handler,
                                     event_loop_task_local,
+                                    async_pipeline,
                                 )
                                 .await
                                 .into_response();
@@ -537,15 +541,15 @@ impl SlimeServer {
                                 started_tx,
                             );
                             if handler[0].1 {
-                                handle_async_python_call(
+                                tokio_runtime.spawn(handle_async_python_call(
                                     PyRequestWorker::Stream(PyRequestStream {
                                         handler,
                                         request: slime_request,
                                         response: new_slime_stream_resonse,
                                     }),
                                     event_loop_task_local,
-                                )
-                                .await;
+                                    async_pipeline,
+                                ));
                             } else {
                                 if let Err(err) = worker_tx
                                     .send(PyRequestWorker::Stream(PyRequestStream {
@@ -580,15 +584,15 @@ impl SlimeServer {
                         }
                         "http" => {
                             if handler[0].1 {
-                                handle_async_python_call(
+                                tokio_runtime.spawn(handle_async_python_call(
                                     PyRequestWorker::Http(PyRequest {
                                         handler,
                                         request: slime_request,
                                         response: resp_tx,
                                     }),
                                     event_loop_task_local,
-                                )
-                                .await;
+                                    async_pipeline,
+                                ));
                             } else {
                                 if let Err(err) = worker_tx
                                     .send(PyRequestWorker::Http(PyRequest {
@@ -670,15 +674,7 @@ impl SlimeServer {
     pub async fn server_run(self) -> PyResult<()> {
         let address: SocketAddr = format!("{}:{}", self.host, self.port).parse()?;
         let server_router = self.set_server_routes();
-        let socket = Socket::new(Domain::for_address(address), Type::STREAM, None)?;
-        socket.set_reuse_address(true)?;
-        #[cfg(target_os = "linux")]
-        socket.set_reuse_port(true)?;
-        socket.bind(&address.into())?;
-        socket.listen(1024)?;
-
-        let listener = TcpListener::from_std(socket.into())?;
-        // let listener = TcpListener::bind(address).await?;
+        let listener = TcpListener::bind(address).await?;
 
         println!("Slime server is running at http://{}", address);
         let _ = axum::serve(
@@ -707,6 +703,7 @@ async fn websocket_handler(
     slime_request: SlimeRequest,
     handler: Arc<Vec<(Py<PyAny>, bool)>>,
     local_event: TaskLocals,
+    async_pipeline: Arc<Py<PyAny>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(async move |socket| {
         {
@@ -737,6 +734,7 @@ async fn websocket_handler(
                         conn: web_conn,
                     }),
                     local_event,
+                    async_pipeline,
                 )
                 .await;
             } else {
@@ -841,66 +839,103 @@ pub fn spawn_python_workers(
     return Arc::new(worker_txs);
 }
 
-async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: TaskLocals) {
+async fn handle_async_python_call(
+    req_worker: PyRequestWorker,
+    local_event: TaskLocals,
+    async_pipeline: Arc<Py<PyAny>>,
+) {
     match req_worker {
         PyRequestWorker::Http(req) => {
-            match Python::attach(|py| {
-                return (
-                    Py::new(py, SlimeResponse::new(py)),
-                    Py::new(py, req.request),
-                );
-            }) {
-                (Ok(response_py), Ok(request_py)) => {
-                    let mut is_error: Option<PyErr> = None;
-                    let co_fut_collection = Python::attach(|py| {
-                        let mut co_fut_collection = Vec::with_capacity(req.handler.len());
-                        for handler_method in 0..req.handler.len() {
-                            let coroutine = match req.handler[handler_method]
-                                .0
-                                .call1(py, (&request_py, &response_py))
-                            {
-                                Ok(co_obj) => co_obj,
-                                Err(err) => {
-                                    is_error = Some(err);
-                                    break;
-                                }
-                            };
-                            match py_asyncio::into_future_with_locals(
-                                &local_event,
-                                coroutine.into_bound(py),
-                            ) {
-                                Ok(co_fut) => co_fut_collection.push(co_fut),
-                                Err(err) => {
-                                    is_error = Some(err);
-                                    break;
-                                }
-                            }
-                        }
-                        return co_fut_collection;
-                    });
-
-                    for coroutine in co_fut_collection {
-                        if let Err(err) = coroutine.await {
-                            is_error = Some(err);
-                            break;
-                        }
+            let mut is_error: Option<PyErr> = None;
+            let mut main_response_py = None;
+            let coroutine = Python::attach(|py| {
+                let request_py = Py::new(py, req.request).unwrap();
+                let response_py = Py::new(py, SlimeResponse::new(py)).unwrap();
+                let handler_collections: Vec<Py<PyAny>> = req
+                    .handler
+                    .iter()
+                    .map(|hand| hand.0.clone_ref(py))
+                    .collect();
+                match async_pipeline.call1(py, (handler_collections, &request_py, &response_py)) {
+                    Ok(corout) => {
+                        main_response_py = Some(response_py);
+                        py_asyncio::into_future_with_locals(&local_event, corout.into_bound(py))
                     }
-                    if is_error.is_some() {
-                        println!("{}", is_error.as_ref().unwrap());
-                        let _ = &req.response.send(Err(is_error.unwrap()));
-                    } else {
-                        let result = Python::attach(|py| response_py.borrow(py).clone_obj(py));
-                        let _ = req.response.send(Ok(result));
+                    Err(err) => Err(err),
+                }
+            });
+            match coroutine {
+                Ok(co_fut) => {
+                    if let Err(err) = co_fut.await {
+                        is_error = Some(err);
                     }
                 }
-                _ => {
-                    let _ = req
-                        .response
-                        .send(Err(pyo3::exceptions::PyException::new_err(
-                            "Cant able to create request and response handler".to_string(),
-                        )));
+                Err(err) => {
+                    is_error = Some(err);
                 }
             }
+
+            if is_error.is_some() {
+                println!("{}", is_error.as_ref().unwrap());
+                let _ = &req.response.send(Err(is_error.unwrap()));
+            } else {
+                let result =
+                    Python::attach(|py| main_response_py.unwrap().borrow(py).clone_obj(py));
+                let _ = req.response.send(Ok(result));
+            }
+
+            // match Python::attach(|py| {
+            //     return (
+            //         Py::new(py, SlimeResponse::new(py)),
+            //         Py::new(py, req.request),
+            //     );
+            // }) {
+            //     (Ok(response_py), Ok(request_py)) => {
+            //         let mut is_error: Option<PyErr> = None;
+
+            //         let coroutine = Python::attach(|py| {
+            //             let handler_collections: Vec<Py<PyAny>> = req
+            //                 .handler
+            //                 .iter()
+            //                 .map(|hand| hand.0.clone_ref(py))
+            //                 .collect();
+            //             match async_pipeline
+            //                 .call1(py, (handler_collections, &request_py, &response_py))
+            //             {
+            //                 Ok(corout) => py_asyncio::into_future_with_locals(
+            //                     &local_event,
+            //                     corout.into_bound(py),
+            //                 ),
+            //                 Err(err) => Err(err),
+            //             }
+            //         });
+            //         match coroutine {
+            //             Ok(co_fut) => {
+            //                 if let Err(err) = co_fut.await {
+            //                     is_error = Some(err);
+            //                 }
+            //             }
+            //             Err(err) => {
+            //                 is_error = Some(err);
+            //             }
+            //         }
+
+            //         if is_error.is_some() {
+            //             println!("{}", is_error.as_ref().unwrap());
+            //             let _ = &req.response.send(Err(is_error.unwrap()));
+            //         } else {
+            //             let result = Python::attach(|py| response_py.borrow(py).clone_obj(py));
+            //             let _ = req.response.send(Ok(result));
+            //         }
+            //     }
+            //     _ => {
+            //         let _ = req
+            //             .response
+            //             .send(Err(pyo3::exceptions::PyException::new_err(
+            //                 "Cant able to create request and response handler".to_string(),
+            //             )));
+            //     }
+            // }
         }
         PyRequestWorker::Stream(req) => {
             match Python::attach(|py| (Py::new(py, req.request), Py::new(py, req.response))) {

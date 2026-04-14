@@ -42,8 +42,7 @@ class SampleMiddle(slime.SlimeMiddleware):
 
 
 @app.route(path="/plain", method="GET")
-async def land_plain(req, resp):
-    await asyncio.sleep(0)
+def land_plain(req, resp):
     return resp.plain("ok")
 
 
@@ -55,7 +54,7 @@ def land_plain_post(req, resp):
 @app.route(path="/json")
 async def land_json(req, resp):
     await asyncio.sleep(0)
-    return resp.json({"name": "abilash", "slimeversion": "V0.1.3"})
+    return resp.json({"hello": "world"})
 
 
 # @app.route(path="/render", method="GET")
