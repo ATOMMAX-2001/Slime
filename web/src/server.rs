@@ -34,12 +34,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tower_http::{compression::CompressionLayer, services::ServeDir};
 use uuid::Uuid;
 
+use crate::request::{SlimeFile, SlimeRequest};
 use crate::response::{SlimeResponse, SlimeStreamResponse, SlimeWebSocketResponse};
 use crate::{constant::SERVER, request::SlimeState};
-use crate::{
-    request::{SlimeFile, SlimeRequest},
-    worker,
-};
 
 use futures_util::SinkExt;
 use pyo3_async_runtimes::{self as py_asyncio, TaskLocals};
@@ -97,6 +94,9 @@ impl Route {
 
 pub enum PyRequestWorker {
     Http(PyRequest),
+    AHttp(PyAsyncRequest),
+    AStream(PyRequestStream),
+    AResponseHttp(PyAsyncResponseHttp),
     Stream(PyRequestStream),
     WebSocket(PyRequestWebSocket),
 }
@@ -110,7 +110,19 @@ pub struct PyRequestStream {
 pub struct PyRequest {
     pub handler: Arc<Vec<Py<PyAny>>>,
     pub request: SlimeRequest,
-    pub response: oneshot::Sender<Result<Response<Body>, PyErr>>,
+    pub response: oneshot::Sender<Result<SlimeResponse, PyErr>>,
+}
+
+pub struct PyAsyncResponseHttp {
+    pub response: Py<SlimeResponse>,
+    pub response_channel: oneshot::Sender<Result<SlimeResponse, PyErr>>,
+}
+
+pub struct PyAsyncRequest {
+    pub handler: Arc<Vec<Py<PyAny>>>,
+    pub request: SlimeRequest,
+    pub response: oneshot::Sender<Result<SlimeResponse, PyErr>>,
+    pub worker: mpsc::Sender<PyRequestWorker>,
 }
 
 #[derive(Clone)]
@@ -151,9 +163,7 @@ pub struct SlimeServer {
     secret_key: Arc<Vec<u8>>,
     template: Arc<Environment<'static>>,
     tokio_handler: tokio::runtime::Handle,
-    event_loop_task: TaskLocals,
     app_states: SlimeState,
-    async_pipeline: Arc<Py<PyAny>>,
 }
 
 impl SlimeServer {
@@ -166,54 +176,9 @@ impl SlimeServer {
         is_dev: bool,
         tokio_runtime_handler: tokio::runtime::Handle,
         app_states: Py<PyDict>,
-        async_pipeline: Py<PyAny>,
     ) -> SlimeServer {
         let env = SlimeServer::get_template_environment(&filename);
-        let local_event_loop = Python::attach(|py| {
-            let asyncio_mod = py.import("asyncio").expect("Need asyncio lib ");
-            #[cfg(target_os = "linux")]
-            {
-                let uv_loop_mod = py.import("uvloop").expect("Need uvloop lib");
 
-                let policy = uv_loop_mod
-                    .getattr("EventLoopPolicy")
-                    .expect("Cant able to fetch policy")
-                    .call0()
-                    .expect("Cant able to fetch policy");
-
-                asyncio_mod
-                    .call_method1("set_event_loop_policy", (policy,))
-                    .expect("failed to set async loop");
-
-                let python_event_loop = asyncio_mod
-                    .call_method0("new_event_loop")
-                    .expect("Failed to create new event loop");
-
-                asyncio_mod
-                    .call_method1("set_event_loop", (&python_event_loop,))
-                    .expect("Failed to set event loop");
-            }
-            let python_event_loop = match asyncio_mod.call_method0("get_running_loop") {
-                Ok(event_loop) => event_loop,
-                Err(_) => {
-                    let new_event = asyncio_mod
-                        .call_method0("new_event_loop")
-                        .expect("Cant able to create event loop");
-                    asyncio_mod
-                        .call_method1("set_event_loop", (new_event.clone(),))
-                        .expect("Cant able to init the event loop");
-                    new_event
-                }
-            };
-            let local_event: TaskLocals = TaskLocals::new(python_event_loop.clone());
-            let unbind_event_loop = python_event_loop.unbind();
-            std::thread::spawn(move || {
-                Python::attach(|py| {
-                    unbind_event_loop.call_method0(py, "run_forever").unwrap();
-                });
-            });
-            return local_event;
-        });
         SlimeServer {
             filename: filename,
             is_dev: is_dev,
@@ -225,9 +190,7 @@ impl SlimeServer {
             secret_key: Arc::new(secret_key.as_bytes().to_vec()),
             template: Arc::new(env),
             tokio_handler: tokio_runtime_handler,
-            event_loop_task: local_event_loop,
             app_states: SlimeState::new(app_states),
-            async_pipeline: Arc::new(async_pipeline),
         }
     }
     // pub async fn new_worker(&mut self) {
@@ -353,7 +316,6 @@ impl SlimeServer {
             let is_dev = self.is_dev;
             let filename = self.filename.to_owned();
             let tokio_runtime = self.tokio_handler.clone();
-            let event_loop_task_local = self.event_loop_task.clone();
             let slime_app_state = self.app_states.clone();
             let request_type = if route.ws {
                 "ws"
@@ -362,7 +324,6 @@ impl SlimeServer {
             } else {
                 "http"
             };
-            let async_pipeline = self.async_pipeline.clone();
             let method_copy = method.to_owned();
             let path_copy = path.to_owned();
             let process_request = move |ConnectInfo(client): ConnectInfo<SocketAddr>,
@@ -524,8 +485,6 @@ impl SlimeServer {
                                     worker_tx.clone(),
                                     slime_request,
                                     handler,
-                                    event_loop_task_local,
-                                    async_pipeline,
                                 )
                                 .await
                                 .into_response();
@@ -544,15 +503,13 @@ impl SlimeServer {
                                 started_tx,
                             );
                             if is_async {
-                                tokio_runtime.spawn(handle_async_python_call(
-                                    PyRequestWorker::Stream(PyRequestStream {
+                                let _ = worker_tx
+                                    .send(PyRequestWorker::AStream(PyRequestStream {
                                         handler,
                                         request: slime_request,
                                         response: new_slime_stream_resonse,
-                                    }),
-                                    event_loop_task_local,
-                                    async_pipeline,
-                                ));
+                                    }))
+                                    .await;
                             } else {
                                 if let Err(err) = worker_tx
                                     .send(PyRequestWorker::Stream(PyRequestStream {
@@ -587,24 +544,15 @@ impl SlimeServer {
                         }
                         "http" => {
                             if is_async {
-                                tokio_runtime.spawn(worker::handle_async_handler(
-                                    PyRequestWorker::Http(PyRequest {
+                                let worker_clone = (*worker_tx).clone();
+                                let _ = worker_tx
+                                    .send(PyRequestWorker::AHttp(PyAsyncRequest {
                                         handler,
                                         request: slime_request,
                                         response: resp_tx,
-                                    }),
-                                    event_loop_task_local,
-                                    async_pipeline,
-                                ));
-                                // tokio_runtime.spawn(handle_async_python_call(
-                                //     PyRequestWorker::Http(PyRequest {
-                                //         handler,
-                                //         request: slime_request,
-                                //         response: resp_tx,
-                                //     }),
-                                //     event_loop_task_local,
-                                //     async_pipeline,
-                                // ));
+                                        worker: worker_clone,
+                                    }))
+                                    .await;
                             } else {
                                 if let Err(err) = worker_tx
                                     .send(PyRequestWorker::Http(PyRequest {
@@ -631,17 +579,18 @@ impl SlimeServer {
                     // to client side response
                     match resp_rx.await {
                         Ok(Ok(result)) => {
-                            return result;
+                            return result._into_response();
                         }
                         Ok(Err(err)) => {
                             (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
                         }
-                        Err(_) => {
+                        Err(err) => {
+                            // dbg!(err);
                             // println!("INFO: Creating new worker...");
                             // let _ = pool_channel.send(idx % worker_count).await;
                             return (
                                 StatusCode::INTERNAL_SERVER_ERROR,
-                                "Worker cant able to handle the response".to_string(),
+                                format!("Worker cant able to handle the response {}", err),
                             )
                                 .into_response();
                         }
@@ -714,8 +663,6 @@ async fn websocket_handler(
     worker: mpsc::Sender<PyRequestWorker>,
     slime_request: SlimeRequest,
     handler: Arc<Vec<Py<PyAny>>>,
-    local_event: TaskLocals,
-    async_pipeline: Arc<Py<PyAny>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(async move |socket| {
         {
@@ -822,6 +769,8 @@ async fn websocket_handler(
 pub fn spawn_python_workers(
     worker_count: usize,
     runtime_handler: Handle,
+    async_pipeline: Arc<Py<PyAny>>,
+    local_event_loop_task: TaskLocals,
 ) -> Arc<Vec<mpsc::Sender<PyRequestWorker>>> {
     let mut worker_txs = Vec::with_capacity(worker_count);
     let pool = ThreadPoolBuilder::new()
@@ -831,217 +780,79 @@ pub fn spawn_python_workers(
 
     for _ in 0..worker_count {
         let runtime_handler_clone = runtime_handler.clone();
+        let async_pipeline_clone = async_pipeline.clone();
+        let task_local_clone = local_event_loop_task.clone();
         let (tx, rx) = mpsc::channel::<PyRequestWorker>(1024 * 1024 * 10);
         worker_txs.push(tx);
-        pool.spawn(move || handle_python_call(rx, runtime_handler_clone.clone()));
+        pool.spawn(move || {
+            handle_python_call(
+                rx,
+                runtime_handler_clone.clone(),
+                async_pipeline_clone,
+                task_local_clone,
+            )
+        });
     }
     return Arc::new(worker_txs);
 }
 
-async fn handle_async_python_call(
-    req_worker: PyRequestWorker,
-    local_event: TaskLocals,
-    async_pipeline: Arc<Py<PyAny>>,
-) {
-    match req_worker {
-        PyRequestWorker::Http(req) => {
-            let mut is_error: Option<PyErr> = None;
-            let mut main_response_py: Option<Py<SlimeResponse>> = None;
-            let coroutine = Python::attach(|py| {
-                let request_py = Py::new(py, req.request).unwrap();
-                let response_py = Py::new(py, SlimeResponse::new()).unwrap();
-                match async_pipeline.call1(py, (&(*req.handler), &request_py, &response_py)) {
-                    Ok(corout) => {
-                        main_response_py = Some(response_py);
-                        py_asyncio::into_future_with_locals(&local_event, corout.into_bound(py))
-                    }
-                    Err(err) => Err(err),
-                }
-            });
-            match coroutine {
-                Ok(co_fut) => {
-                    if let Err(err) = co_fut.await {
-                        is_error = Some(err);
-                    }
-                }
-                Err(err) => {
-                    is_error = Some(err);
-                }
-            }
-
-            if is_error.is_some() {
-                println!("{}", is_error.as_ref().unwrap());
-                let _ = &req.response.send(Err(is_error.unwrap()));
-            } else {
-                let result =
-                    Python::attach(|py| main_response_py.unwrap().borrow(py)._into_response());
-                let _ = req.response.send(Ok(result));
-            }
-
-            // match Python::attach(|py| {
-            //     return (
-            //         Py::new(py, SlimeResponse::new(py)),
-            //         Py::new(py, req.request),
-            //     );
-            // }) {
-            //     (Ok(response_py), Ok(request_py)) => {
-            //         let mut is_error: Option<PyErr> = None;
-
-            //         let coroutine = Python::attach(|py| {
-            //             let handler_collections: Vec<Py<PyAny>> = req
-            //                 .handler
-            //                 .iter()
-            //                 .map(|hand| hand.0.clone_ref(py))
-            //                 .collect();
-            //             match async_pipeline
-            //                 .call1(py, (handler_collections, &request_py, &response_py))
-            //             {
-            //                 Ok(corout) => py_asyncio::into_future_with_locals(
-            //                     &local_event,
-            //                     corout.into_bound(py),
-            //                 ),
-            //                 Err(err) => Err(err),
-            //             }
-            //         });
-            //         match coroutine {
-            //             Ok(co_fut) => {
-            //                 if let Err(err) = co_fut.await {
-            //                     is_error = Some(err);
-            //                 }
-            //             }
-            //             Err(err) => {
-            //                 is_error = Some(err);
-            //             }
-            //         }
-
-            //         if is_error.is_some() {
-            //             println!("{}", is_error.as_ref().unwrap());
-            //             let _ = &req.response.send(Err(is_error.unwrap()));
-            //         } else {
-            //             let result = Python::attach(|py| response_py.borrow(py).clone_obj(py));
-            //             let _ = req.response.send(Ok(result));
-            //         }
-            //     }
-            //     _ => {
-            //         let _ = req
-            //             .response
-            //             .send(Err(pyo3::exceptions::PyException::new_err(
-            //                 "Cant able to create request and response handler".to_string(),
-            //             )));
-            //     }
-            // }
-        }
-        PyRequestWorker::Stream(req) => {
-            match Python::attach(|py| (Py::new(py, req.request), Py::new(py, req.response))) {
-                (Ok(request_py), Ok(response_py)) => {
-                    let mut is_error: Option<PyErr> = None;
-                    let co_collections = Python::attach(|py| {
-                        let mut co_collections = Vec::with_capacity(req.handler.len());
-                        for handler_method in 0..req.handler.len() {
-                            co_collections.push(
-                                req.handler[handler_method].call1(py, (&request_py, &response_py)),
-                            );
-                        }
-                        return co_collections;
-                    });
-
-                    for co in co_collections {
-                        match co {
-                            Ok(co_handler) => {
-                                let future = Python::attach(|py| {
-                                    py_asyncio::into_future_with_locals(
-                                        &local_event,
-                                        co_handler.into_bound(py),
-                                    )
-                                    .unwrap()
-                                });
-                                if let Err(err) = future.await {
-                                    is_error = Some(err);
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                is_error = Some(err);
-                                break;
-                            }
-                        }
-                        let _ = tokio::task::yield_now();
-                    }
-                    if is_error.is_some() {
-                        println!("ERROR: {}", is_error.unwrap());
-                    }
-                }
-                _ => {
-                    println!("ERROR: Cant able to create reqeust and response handler");
-                }
-            }
-        }
-        PyRequestWorker::WebSocket(req) => {
-            match Python::attach(|py| {
-                (
-                    Py::new(py, req.request),
-                    Py::new(
-                        py,
-                        SlimeWebSocketResponse {
-                            conn: req.conn,
-                            on_message_handler: Arc::new(None),
-                            on_close_handler: Arc::new(None),
-                            on_error_handler: Arc::new(None),
-                            on_ping_handler: Arc::new(None),
-                        },
-                    ),
-                )
-            }) {
-                (Ok(request_py), Ok(response_py)) => {
-                    let mut is_error: Option<PyErr> = None;
-                    let co_collections = Python::attach(|py| {
-                        let mut co_collections = Vec::with_capacity(req.handler.len());
-                        for handler_method in 0..req.handler.len() {
-                            co_collections.push(
-                                req.handler[handler_method].call1(py, (&request_py, &response_py)),
-                            );
-                        }
-                        return co_collections;
-                    });
-                    for co in co_collections {
-                        match co {
-                            Ok(co_handler) => {
-                                let future = Python::attach(|py| {
-                                    py_asyncio::into_future_with_locals(
-                                        &local_event,
-                                        co_handler.into_bound(py),
-                                    )
-                                    .unwrap()
-                                });
-                                if let Err(err) = future.await {
-                                    is_error = Some(err);
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                is_error = Some(err);
-                            }
-                        }
-                    }
-                    if is_error.is_some() {
-                        println!("ERROR: {}", is_error.unwrap());
-                    }
-                    let result = Python::attach(|py| response_py.borrow(py).clone());
-                    let _ = req.response.send(Ok(result));
-                }
-                _ => {
-                    println!("ERROR: Cant able to create reqeust and response handler");
-                }
-            }
-        }
-    }
-}
-
 #[inline]
-fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler: Handle) {
+fn handle_python_call(
+    mut rx: mpsc::Receiver<PyRequestWorker>,
+    runtime_handler: Handle,
+    async_pipeline: Arc<Py<PyAny>>,
+    local_task_events: TaskLocals,
+) {
     Python::attach(|py| {
         while let Some(req_worker) = py.detach(|| rx.blocking_recv()) {
             match req_worker {
+                PyRequestWorker::AResponseHttp(req) => {
+                    let result = req.response.borrow(py).clone_obj();
+                    let _ = req.response_channel.send(Ok(result));
+                }
+                PyRequestWorker::AHttp(req) => {
+                    match (Py::new(py, SlimeResponse::new()), Py::new(py, req.request)) {
+                        (Ok(response_py), Ok(request_py)) => {
+                            if let Ok(co) = async_pipeline
+                                .call1(py, (&(*req.handler), request_py, &response_py))
+                            {
+                                match py_asyncio::into_future_with_locals(
+                                    &local_task_events,
+                                    co.into_bound(py),
+                                ) {
+                                    Ok(co_fut) => {
+                                        runtime_handler.spawn(async move {
+                                            if let Err(err) = co_fut.await {
+                                                let _ = req.response.send(Err(err));
+                                            } else {
+                                                let _ = req
+                                                    .worker
+                                                    .send(PyRequestWorker::AResponseHttp(
+                                                        PyAsyncResponseHttp {
+                                                            response: response_py,
+                                                            response_channel: req.response,
+                                                        },
+                                                    ))
+                                                    .await;
+                                            }
+                                        });
+                                    }
+                                    Err(err) => {
+                                        println!("ERROR: {}", err);
+                                        let _ = req.response.send(Err(err));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            let _ = req
+                                .response
+                                .send(Err(pyo3::exceptions::PyException::new_err(
+                                    "Cant able to create request and response handler".to_string(),
+                                )));
+                        }
+                    }
+                }
                 PyRequestWorker::Http(req) => {
                     match (Py::new(py, SlimeResponse::new()), Py::new(py, req.request)) {
                         (Ok(response_py), Ok(request_py)) => {
@@ -1065,7 +876,7 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler:
                             if is_error.is_some() {
                                 let _ = &req.response.send(Err(is_error.unwrap()));
                             } else {
-                                let result = response_py.borrow(py)._into_response();
+                                let result = response_py.borrow(py).clone_obj();
                                 let _ = req.response.send(Ok(result));
                             }
                         }
@@ -1075,6 +886,35 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler:
                                 .send(Err(pyo3::exceptions::PyException::new_err(
                                     "Cant able to create request and response handler".to_string(),
                                 )));
+                        }
+                    }
+                }
+
+                PyRequestWorker::AStream(req) => {
+                    match (Py::new(py, SlimeResponse::new()), Py::new(py, req.request)) {
+                        (Ok(response_py), Ok(request_py)) => {
+                            if let Ok(co) = async_pipeline
+                                .call1(py, (&(*req.handler), request_py, &response_py))
+                            {
+                                match py_asyncio::into_future_with_locals(
+                                    &local_task_events,
+                                    co.into_bound(py),
+                                ) {
+                                    Ok(co_fut) => {
+                                        runtime_handler.spawn(async move {
+                                            let _ = co_fut.await;
+                                        });
+                                    }
+                                    Err(err) => {
+                                        println!("ERROR: {}", err);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            let _ = println!(
+                                "ERROR: Cant able to create reqeust and response handler for async stream"
+                            );
                         }
                     }
                 }
@@ -1092,7 +932,9 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler:
                             }
                         }
                         _ => {
-                            println!("ERROR: Cant able to create reqeust and response handler");
+                            println!(
+                                "ERROR: Cant able to create reqeust and response handler for stream"
+                            );
                         }
                     }
                 }
@@ -1122,7 +964,9 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler:
                             let _ = req.response.send(Ok(result));
                         }
                         _ => {
-                            println!("ERROR: Cant able to create reqeust and response handler");
+                            println!(
+                                "ERROR: Cant able to create reqeust and response handler for websocket"
+                            );
                         }
                     }
                 }

@@ -1,13 +1,13 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::types::PyModule;
-
+use pyo3_async_runtimes::TaskLocals;
+use std::sync::Arc;
 use tokio::runtime::Builder;
 
 mod request;
 mod response;
 mod server;
-mod worker;
 
 use server::SlimeServer;
 mod constant;
@@ -57,7 +57,60 @@ pub fn init_web(
         .build()?;
 
     let runtime_handler = runtime.handle().clone();
-    let worker_txs = server::spawn_python_workers(worker_count, runtime_handler.clone());
+
+    let local_event_loop_task = Python::attach(|py| {
+        let asyncio_mod = py.import("asyncio").expect("Need asyncio lib ");
+        #[cfg(target_os = "linux")]
+        {
+            let uv_loop_mod = py.import("uvloop").expect("Need uvloop lib");
+
+            let policy = uv_loop_mod
+                .getattr("EventLoopPolicy")
+                .expect("Cant able to fetch policy")
+                .call0()
+                .expect("Cant able to fetch policy");
+
+            asyncio_mod
+                .call_method1("set_event_loop_policy", (policy,))
+                .expect("failed to set async loop");
+
+            let python_event_loop = asyncio_mod
+                .call_method0("new_event_loop")
+                .expect("Failed to create new event loop");
+
+            asyncio_mod
+                .call_method1("set_event_loop", (&python_event_loop,))
+                .expect("Failed to set event loop");
+        }
+        let python_event_loop = match asyncio_mod.call_method0("get_running_loop") {
+            Ok(event_loop) => event_loop,
+            Err(_) => {
+                let new_event = asyncio_mod
+                    .call_method0("new_event_loop")
+                    .expect("Cant able to create event loop");
+                asyncio_mod
+                    .call_method1("set_event_loop", (new_event.clone(),))
+                    .expect("Cant able to init the event loop");
+                new_event
+            }
+        };
+        let local_event: TaskLocals = TaskLocals::new(python_event_loop.clone());
+        let unbind_event_loop = python_event_loop.unbind();
+        std::thread::spawn(move || {
+            Python::attach(|py| {
+                unbind_event_loop.call_method0(py, "run_forever").unwrap();
+            });
+        });
+        return local_event;
+    });
+
+    let worker_txs = server::spawn_python_workers(
+        worker_count,
+        runtime_handler.clone(),
+        Arc::new(async_pipeline),
+        local_event_loop_task,
+    );
+
     let mut server = SlimeServer::new(
         host,
         port,
@@ -67,7 +120,6 @@ pub fn init_web(
         is_dev,
         runtime_handler,
         app_states,
-        async_pipeline,
     );
 
     server.load_routes(routes)?;

@@ -87,13 +87,13 @@ async def land_json(req, resp):
 # #     resp.set_header("AFTER", "REQUEST")
 
 
-# @app.route(path="/stream", method="GET", stream="text/plain")
-# async def stream_me(req, resp):
-#     await asyncio.sleep(1)
-#     resp.start_stream()
-#     for i in range(5):
-#         resp.send(i)
-#     resp.close()
+@app.route(path="/stream", method="GET", stream="text/plain")
+async def stream_me(req, resp):
+    await asyncio.sleep(1)
+    resp.start_stream()
+    for i in range(5):
+        resp.send(i)
+    resp.close()
 
 
 # @app.route(path="/test", method="POST")
