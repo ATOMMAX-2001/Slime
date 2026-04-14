@@ -7,6 +7,7 @@ use tokio::runtime::Builder;
 mod request;
 mod response;
 mod server;
+mod worker;
 
 use server::SlimeServer;
 mod constant;

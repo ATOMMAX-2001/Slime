@@ -12,7 +12,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use hmac::{Hmac, Mac};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+
 use pythonize::depythonize;
 use sha2::Sha256;
 use std::sync::Arc;
@@ -138,7 +138,7 @@ impl SlimeStreamResponse {
 pub struct SlimeResponse {
     pub status: u16,
     pub is_stream: Option<mpsc::Receiver<Result<Bytes, io::Error>>>,
-    pub headers: Py<PyDict>,
+    pub headers: HashMap<String, HeaderValue>,
     pub header_size: usize,
     pub cookies: Vec<String>,
     pub content_type: String,
@@ -161,18 +161,9 @@ impl SlimeResponse {
             .header(CONTENT_TYPE, &self.content_type)
             .header(SERVER, CONST_SERVER);
         if self.header_size != 0 {
-            result = Python::attach(|py| {
-                if let Ok(headers_result) = self.headers.bind(py).cast::<PyDict>() {
-                    for (k, v) in headers_result {
-                        if let (Ok(key), Ok(value)) = (k.extract::<&str>(), v.extract::<&str>()) {
-                            if let Ok(header_value) = HeaderValue::from_str(value) {
-                                result = result.header(key, header_value);
-                            }
-                        }
-                    }
-                }
-                return result;
-            });
+            for (key, value) in &self.headers {
+                result = result.header(key, value);
+            }
         }
 
         let mut final_response = if let Some(body_data) = self.body.to_owned() {
@@ -191,11 +182,11 @@ impl SlimeResponse {
         return final_response;
     }
 
-    pub fn clone_obj(&self, py: Python) -> SlimeResponse {
+    pub fn clone_obj(&self) -> SlimeResponse {
         SlimeResponse {
             status: self.status,
             is_stream: None,
-            headers: self.headers.clone_ref(py),
+            headers: self.headers.clone(),
             header_size: self.header_size,
             cookies: self.cookies.to_owned(),
             content_type: self.content_type.to_owned(),
@@ -207,11 +198,11 @@ impl SlimeResponse {
 #[pymethods]
 impl SlimeResponse {
     #[new]
-    pub fn new(py: Python) -> SlimeResponse {
+    pub fn new() -> SlimeResponse {
         SlimeResponse {
             status: 200,
             is_stream: None,
-            headers: PyDict::new(py).unbind(),
+            headers: HashMap::with_capacity(3),
             header_size: 0,
             cookies: Vec::new(),
             content_type: "text/plain".to_string(),
@@ -243,9 +234,15 @@ impl SlimeResponse {
         return Ok(());
     }
 
-    fn set_header(&mut self, py: Python, key: String, value: String) -> PyResult<()> {
-        let headers = self.headers.bind(py);
-        headers.set_item(key, value)?;
+    fn set_header(&mut self, key: String, value: String) -> PyResult<()> {
+        if let Ok(header_value) = HeaderValue::from_str(value.as_str()) {
+            self.headers.insert(key, header_value);
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Cant able to convert proper header value",
+            ));
+        }
+
         self.header_size += 1;
         return Ok(());
     }

@@ -34,9 +34,12 @@ use tokio_stream::wrappers::ReceiverStream;
 use tower_http::{compression::CompressionLayer, services::ServeDir};
 use uuid::Uuid;
 
-use crate::request::{SlimeFile, SlimeRequest};
 use crate::response::{SlimeResponse, SlimeStreamResponse, SlimeWebSocketResponse};
 use crate::{constant::SERVER, request::SlimeState};
+use crate::{
+    request::{SlimeFile, SlimeRequest},
+    worker,
+};
 
 use futures_util::SinkExt;
 use pyo3_async_runtimes::{self as py_asyncio, TaskLocals};
@@ -49,7 +52,8 @@ pub struct Route {
     pub ws: bool,
     pub compression: u8,
     pub body_size: usize,
-    pub handler: Arc<Vec<(Py<PyAny>, bool)>>,
+    pub handler: Arc<Vec<Py<PyAny>>>,
+    pub is_async: bool,
 }
 
 impl Clone for Route {
@@ -62,6 +66,7 @@ impl Clone for Route {
             compression: self.compression,
             body_size: self.body_size,
             handler: self.handler.clone(),
+            is_async: self.is_async,
         }
     }
 }
@@ -74,7 +79,8 @@ impl Route {
         ws: bool,
         compression: u8,
         body_size: usize,
-        handler: Vec<(Py<PyAny>, bool)>,
+        handler: Vec<Py<PyAny>>,
+        is_async: bool,
     ) -> Self {
         Self {
             path,
@@ -84,6 +90,7 @@ impl Route {
             compression,
             body_size,
             handler: Arc::new(handler),
+            is_async: is_async,
         }
     }
 }
@@ -95,15 +102,15 @@ pub enum PyRequestWorker {
 }
 
 pub struct PyRequestStream {
-    pub handler: Arc<Vec<(Py<PyAny>, bool)>>,
+    pub handler: Arc<Vec<Py<PyAny>>>,
     pub request: SlimeRequest,
     pub response: SlimeStreamResponse,
 }
 
 pub struct PyRequest {
-    pub handler: Arc<Vec<(Py<PyAny>, bool)>>,
+    pub handler: Arc<Vec<Py<PyAny>>>,
     pub request: SlimeRequest,
-    pub response: oneshot::Sender<PyResult<SlimeResponse>>,
+    pub response: oneshot::Sender<Result<Response<Body>, PyErr>>,
 }
 
 #[derive(Clone)]
@@ -113,9 +120,9 @@ pub struct WebSocketConn {
 }
 
 pub struct PyRequestWebSocket {
-    pub handler: Arc<Vec<(Py<PyAny>, bool)>>,
+    pub handler: Arc<Vec<Py<PyAny>>>,
     pub request: SlimeRequest,
-    pub response: oneshot::Sender<PyResult<SlimeWebSocketResponse>>,
+    pub response: oneshot::Sender<Result<SlimeWebSocketResponse, PyErr>>,
     pub conn: WebSocketConn,
 }
 
@@ -260,23 +267,21 @@ impl SlimeServer {
             let compression: u8 = key.getattr("compression")?.extract()?;
             let body_size: usize = key.getattr("body_size")?.extract()?;
             let handler = value.cast::<PyDict>()?;
-            let mut handlers: Vec<(Py<PyAny>, bool)> = Vec::with_capacity(3);
-
+            let mut handlers: Vec<Py<PyAny>> = Vec::with_capacity(3);
+            let mut is_async = false;
             if let Ok(Some(before_handler)) = handler.get_item("before") {
                 if !before_handler.is_none() {
                     let handler_object_collection: &Bound<PyList> =
                         before_handler.cast::<PyList>()?;
                     for before_middle in handler_object_collection {
                         let handler_object = before_middle.cast::<PyTuple>()?;
+                        is_async = handler_object
+                            .get_item(1)
+                            .unwrap()
+                            .extract::<bool>()
+                            .unwrap_or(false);
 
-                        handlers.push((
-                            handler_object.get_item(0).unwrap().unbind(),
-                            handler_object
-                                .get_item(1)
-                                .unwrap()
-                                .extract::<bool>()
-                                .unwrap_or(false),
-                        ));
+                        handlers.push(handler_object.get_item(0).unwrap().unbind());
                     }
                 }
             }
@@ -286,14 +291,12 @@ impl SlimeServer {
 
                     let handler_object_item = handler_object_collection.get_item(0)?;
                     let handler_object = handler_object_item.cast::<PyTuple>()?;
-                    handlers.push((
-                        handler_object.get_item(0).unwrap().unbind(),
-                        handler_object
-                            .get_item(1)
-                            .unwrap()
-                            .extract::<bool>()
-                            .unwrap_or(false),
-                    ));
+                    is_async = handler_object
+                        .get_item(1)
+                        .unwrap()
+                        .extract::<bool>()
+                        .unwrap_or(false);
+                    handlers.push(handler_object.get_item(0).unwrap().unbind());
                 }
             }
             if let Ok(Some(after_handler)) = handler.get_item("after") {
@@ -303,18 +306,16 @@ impl SlimeServer {
 
                     for after_middle in handler_object_collection {
                         let handler_object = after_middle.cast::<PyTuple>()?;
-
-                        handlers.push((
-                            handler_object.get_item(0).unwrap().unbind(),
-                            handler_object
-                                .get_item(1)
-                                .unwrap()
-                                .extract::<bool>()
-                                .unwrap_or(false),
-                        ));
+                        is_async = handler_object
+                            .get_item(1)
+                            .unwrap()
+                            .extract::<bool>()
+                            .unwrap_or(false);
+                        handlers.push(handler_object.get_item(0).unwrap().unbind());
                     }
                 }
             }
+
             routes_collection.push(Route::new(
                 path,
                 method,
@@ -323,6 +324,7 @@ impl SlimeServer {
                 compression,
                 body_size,
                 handlers,
+                is_async,
             ));
         }
         self.routes = routes_collection;
@@ -340,6 +342,7 @@ impl SlimeServer {
             let method = route.method;
             let stream_content = route.stream;
             let handler = route.handler.clone();
+            let is_async = route.is_async;
             let compression = route.compression;
             let body_size = route.body_size;
             let worker_txs = self.worker_txs.clone();
@@ -540,7 +543,7 @@ impl SlimeServer {
                                 tokio_runtime.clone(),
                                 started_tx,
                             );
-                            if handler[0].1 {
+                            if is_async {
                                 tokio_runtime.spawn(handle_async_python_call(
                                     PyRequestWorker::Stream(PyRequestStream {
                                         handler,
@@ -583,8 +586,8 @@ impl SlimeServer {
                             }
                         }
                         "http" => {
-                            if handler[0].1 {
-                                tokio_runtime.spawn(handle_async_python_call(
+                            if is_async {
+                                tokio_runtime.spawn(worker::handle_async_handler(
                                     PyRequestWorker::Http(PyRequest {
                                         handler,
                                         request: slime_request,
@@ -593,6 +596,15 @@ impl SlimeServer {
                                     event_loop_task_local,
                                     async_pipeline,
                                 ));
+                                // tokio_runtime.spawn(handle_async_python_call(
+                                //     PyRequestWorker::Http(PyRequest {
+                                //         handler,
+                                //         request: slime_request,
+                                //         response: resp_tx,
+                                //     }),
+                                //     event_loop_task_local,
+                                //     async_pipeline,
+                                // ));
                             } else {
                                 if let Err(err) = worker_tx
                                     .send(PyRequestWorker::Http(PyRequest {
@@ -619,7 +631,7 @@ impl SlimeServer {
                     // to client side response
                     match resp_rx.await {
                         Ok(Ok(result)) => {
-                            return result._into_response();
+                            return result;
                         }
                         Ok(Err(err)) => {
                             (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
@@ -701,7 +713,7 @@ async fn websocket_handler(
     tok_hand: Handle,
     worker: mpsc::Sender<PyRequestWorker>,
     slime_request: SlimeRequest,
-    handler: Arc<Vec<(Py<PyAny>, bool)>>,
+    handler: Arc<Vec<Py<PyAny>>>,
     local_event: TaskLocals,
     async_pipeline: Arc<Py<PyAny>>,
 ) -> impl IntoResponse {
@@ -725,33 +737,20 @@ async fn websocket_handler(
                 }
             });
             let (worker_tx, worker_resp) = oneshot::channel::<PyResult<SlimeWebSocketResponse>>();
-            if handler[0].1 {
-                handle_async_python_call(
-                    PyRequestWorker::WebSocket(PyRequestWebSocket {
-                        handler: handler,
-                        request: slime_request,
-                        response: worker_tx,
-                        conn: web_conn,
-                    }),
-                    local_event,
-                    async_pipeline,
-                )
-                .await;
-            } else {
-                if let Err(err) = worker
-                    .send(PyRequestWorker::WebSocket(PyRequestWebSocket {
-                        handler: handler,
-                        request: slime_request,
-                        response: worker_tx,
-                        conn: web_conn,
-                    }))
-                    .await
-                {
-                    println!(
-                        "Worker down cant able to handle the request (reason) => {}",
-                        err.to_string()
-                    );
-                }
+
+            if let Err(err) = worker
+                .send(PyRequestWorker::WebSocket(PyRequestWebSocket {
+                    handler: handler,
+                    request: slime_request,
+                    response: worker_tx,
+                    conn: web_conn,
+                }))
+                .await
+            {
+                println!(
+                    "Worker down cant able to handle the request (reason) => {}",
+                    err.to_string()
+                );
             }
 
             if let Ok(Ok(resp)) = worker_resp.await {
@@ -847,16 +846,11 @@ async fn handle_async_python_call(
     match req_worker {
         PyRequestWorker::Http(req) => {
             let mut is_error: Option<PyErr> = None;
-            let mut main_response_py = None;
+            let mut main_response_py: Option<Py<SlimeResponse>> = None;
             let coroutine = Python::attach(|py| {
                 let request_py = Py::new(py, req.request).unwrap();
-                let response_py = Py::new(py, SlimeResponse::new(py)).unwrap();
-                let handler_collections: Vec<Py<PyAny>> = req
-                    .handler
-                    .iter()
-                    .map(|hand| hand.0.clone_ref(py))
-                    .collect();
-                match async_pipeline.call1(py, (handler_collections, &request_py, &response_py)) {
+                let response_py = Py::new(py, SlimeResponse::new()).unwrap();
+                match async_pipeline.call1(py, (&(*req.handler), &request_py, &response_py)) {
                     Ok(corout) => {
                         main_response_py = Some(response_py);
                         py_asyncio::into_future_with_locals(&local_event, corout.into_bound(py))
@@ -880,7 +874,7 @@ async fn handle_async_python_call(
                 let _ = &req.response.send(Err(is_error.unwrap()));
             } else {
                 let result =
-                    Python::attach(|py| main_response_py.unwrap().borrow(py).clone_obj(py));
+                    Python::attach(|py| main_response_py.unwrap().borrow(py)._into_response());
                 let _ = req.response.send(Ok(result));
             }
 
@@ -945,9 +939,7 @@ async fn handle_async_python_call(
                         let mut co_collections = Vec::with_capacity(req.handler.len());
                         for handler_method in 0..req.handler.len() {
                             co_collections.push(
-                                req.handler[handler_method]
-                                    .0
-                                    .call1(py, (&request_py, &response_py)),
+                                req.handler[handler_method].call1(py, (&request_py, &response_py)),
                             );
                         }
                         return co_collections;
@@ -1006,9 +998,7 @@ async fn handle_async_python_call(
                         let mut co_collections = Vec::with_capacity(req.handler.len());
                         for handler_method in 0..req.handler.len() {
                             co_collections.push(
-                                req.handler[handler_method]
-                                    .0
-                                    .call1(py, (&request_py, &response_py)),
+                                req.handler[handler_method].call1(py, (&request_py, &response_py)),
                             );
                         }
                         return co_collections;
@@ -1053,15 +1043,11 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler:
         while let Some(req_worker) = py.detach(|| rx.blocking_recv()) {
             match req_worker {
                 PyRequestWorker::Http(req) => {
-                    match (
-                        Py::new(py, SlimeResponse::new(py)),
-                        Py::new(py, req.request),
-                    ) {
+                    match (Py::new(py, SlimeResponse::new()), Py::new(py, req.request)) {
                         (Ok(response_py), Ok(request_py)) => {
                             let mut is_error: Option<PyErr> = None;
                             for handler_method in 0..req.handler.len() {
                                 if let Err(err) = req.handler[handler_method]
-                                    .0
                                     .call1(py, (&request_py, &response_py))
                                 {
                                     let path = request_py.getattr(py, "path").unwrap().to_string();
@@ -1079,7 +1065,7 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler:
                             if is_error.is_some() {
                                 let _ = &req.response.send(Err(is_error.unwrap()));
                             } else {
-                                let result = response_py.borrow(py).clone_obj(py);
+                                let result = response_py.borrow(py)._into_response();
                                 let _ = req.response.send(Ok(result));
                             }
                         }
@@ -1097,7 +1083,6 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler:
                         (Ok(request_py), Ok(response_py)) => {
                             for handler_method in 0..req.handler.len() {
                                 if let Err(err) = req.handler[handler_method]
-                                    .0
                                     .call1(py, (&request_py, &response_py))
                                 {
                                     println!("ERROR: {}", err);
@@ -1126,7 +1111,6 @@ fn handle_python_call(mut rx: mpsc::Receiver<PyRequestWorker>, _runtime_handler:
                         (Ok(request_py), Ok(response_py)) => {
                             for handler_method in 0..req.handler.len() {
                                 if let Err(err) = req.handler[handler_method]
-                                    .0
                                     .call1(py, (&request_py, &response_py))
                                 {
                                     println!("ERROR: {}", err);
