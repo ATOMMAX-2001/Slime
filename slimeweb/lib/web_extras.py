@@ -27,12 +27,6 @@ def validate_me(self, obj, raise_err=True):
 
 web.SlimeRequest.validate = validate_me  # type: ignore
 
-import asyncio
-
-import uvloop
-
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
 
 async def slime_async_pipeline(handlers, req, resp):
     for handler in handlers:
