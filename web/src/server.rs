@@ -9,13 +9,13 @@ use axum::{
     response::{IntoResponse, Response},
     routing::MethodRouter,
 };
-
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::StreamExt;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use pyo3::{prelude::*, types::PyTuple};
 use rayon::{ThreadPoolBuilder, yield_now};
+use socket2::{Domain, Socket, Type};
 
 use axum::extract::Path;
 use minijinja::{AutoEscape, Environment, path_loader};
@@ -670,7 +670,15 @@ impl SlimeServer {
     pub async fn server_run(self) -> PyResult<()> {
         let address: SocketAddr = format!("{}:{}", self.host, self.port).parse()?;
         let server_router = self.set_server_routes();
-        let listener = TcpListener::bind(address).await?;
+        let socket = Socket::new(Domain::for_address(address), Type::STREAM, None)?;
+        socket.set_reuse_address(true)?;
+        #[cfg(target_os = "linux")]
+        socket.set_reuse_port(true)?;
+        socket.bind(&address.into())?;
+        socket.listen(1024)?;
+
+        let listener = TcpListener::from_std(socket.into())?;
+        // let listener = TcpListener::bind(address).await?;
 
         println!("Slime server is running at http://{}", address);
         let _ = axum::serve(
@@ -844,39 +852,39 @@ async fn handle_async_python_call(req_worker: PyRequestWorker, local_event: Task
             }) {
                 (Ok(response_py), Ok(request_py)) => {
                     let mut is_error: Option<PyErr> = None;
-                    let co_collections = Python::attach(|py| {
-                        let mut co_collections = Vec::with_capacity(req.handler.len());
+                    let co_fut_collection = Python::attach(|py| {
+                        let mut co_fut_collection = Vec::with_capacity(req.handler.len());
                         for handler_method in 0..req.handler.len() {
-                            co_collections.push(
-                                req.handler[handler_method]
-                                    .0
-                                    .call1(py, (&request_py, &response_py)),
-                            );
-                        }
-                        return co_collections;
-                    });
-                    for co in co_collections {
-                        match co {
-                            Ok(co_handler) => {
-                                let future = Python::attach(|py| {
-                                    py_asyncio::into_future_with_locals(
-                                        &local_event,
-                                        co_handler.into_bound(py),
-                                    )
-                                    .unwrap()
-                                });
-                                if let Err(err) = future.await {
+                            let coroutine = match req.handler[handler_method]
+                                .0
+                                .call1(py, (&request_py, &response_py))
+                            {
+                                Ok(co_obj) => co_obj,
+                                Err(err) => {
+                                    is_error = Some(err);
+                                    break;
+                                }
+                            };
+                            match py_asyncio::into_future_with_locals(
+                                &local_event,
+                                coroutine.into_bound(py),
+                            ) {
+                                Ok(co_fut) => co_fut_collection.push(co_fut),
+                                Err(err) => {
                                     is_error = Some(err);
                                     break;
                                 }
                             }
-                            Err(err) => {
-                                is_error = Some(err);
-                                break;
-                            }
+                        }
+                        return co_fut_collection;
+                    });
+
+                    for coroutine in co_fut_collection {
+                        if let Err(err) = coroutine.await {
+                            is_error = Some(err);
+                            break;
                         }
                     }
-
                     if is_error.is_some() {
                         println!("{}", is_error.as_ref().unwrap());
                         let _ = &req.response.send(Err(is_error.unwrap()));
