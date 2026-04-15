@@ -159,7 +159,7 @@ def display_logo():
     print("   ___ \\| | | '_ ` _ \\ / _ \\ \\/  \\/ / _ \\ '_ \\ ")
     print("  ____) | | | | | | | |  __/\\  /\\  /  __/ |_) |")
     print(" |_____/|_|_|_| |_| |_|\\___| \\/  \\/ \\___|_.__/ ")
-    print("Version: 0.1.7\t\t\t Author: S.Abilash")
+    print("Version: 0.2.0\t\t\t Author: S.Abilash")
 
 
 def main():

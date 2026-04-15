@@ -1,3 +1,6 @@
+// # AUTHOR: S.ABILASH
+// # Email: abinix01@gmail.com
+
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -48,6 +51,7 @@ pub struct Route {
     pub stream: Option<String>,
     pub ws: bool,
     pub compression: u8,
+    pub comp_level: i32,
     pub body_size: usize,
     pub handler: Arc<Vec<Py<PyAny>>>,
     pub is_async: bool,
@@ -61,6 +65,7 @@ impl Clone for Route {
             stream: self.stream.to_owned(),
             ws: self.ws,
             compression: self.compression,
+            comp_level: self.comp_level,
             body_size: self.body_size,
             handler: self.handler.clone(),
             is_async: self.is_async,
@@ -75,6 +80,7 @@ impl Route {
         stream: Option<String>,
         ws: bool,
         compression: u8,
+        comp_level: i32,
         body_size: usize,
         handler: Vec<Py<PyAny>>,
         is_async: bool,
@@ -85,6 +91,7 @@ impl Route {
             stream,
             ws,
             compression,
+            comp_level,
             body_size,
             handler: Arc::new(handler),
             is_async: is_async,
@@ -243,6 +250,7 @@ impl SlimeServer {
             let stream: Option<String> = key.getattr("stream")?.extract()?;
             let ws: bool = key.getattr("ws")?.extract()?;
             let compression: u8 = key.getattr("compression")?.extract()?;
+            let comp_level: i32 = key.getattr("comp_level")?.extract()?;
             let body_size: usize = key.getattr("body_size")?.extract()?;
             let handler = value.cast::<PyDict>()?;
             let mut handlers: Vec<Py<PyAny>> = Vec::with_capacity(3);
@@ -300,6 +308,7 @@ impl SlimeServer {
                 stream,
                 ws,
                 compression,
+                comp_level,
                 body_size,
                 handlers,
                 is_async,
@@ -322,6 +331,7 @@ impl SlimeServer {
             let handler = route.handler.clone();
             let is_async = route.is_async;
             let compression = route.compression;
+            let comp_level = route.comp_level;
             let body_size = route.body_size;
             let worker_txs = self.worker_txs.clone();
             let request_counter = self.request_counter.clone();
@@ -639,7 +649,8 @@ impl SlimeServer {
                     }
                     _ => {}
                 }
-                new_compression = new_compression.quality(tower_http::CompressionLevel::Best);
+                new_compression =
+                    new_compression.quality(tower_http::CompressionLevel::Precise(comp_level));
                 method_router = method_router.layer(new_compression);
             }
 

@@ -24,6 +24,14 @@ class SlimeCompression(Enum):
     Zstd = 3
 
 
+class SlimeMiddleware:
+    def middle_before(self, req, resp):
+        pass
+
+    def middle_after(self, req, resp):
+        pass
+
+
 class SlimeResponseType(Enum):
     PlainResponse = 0
     JsonResponse = 1
@@ -187,6 +195,7 @@ class Routes:
         stream: str | None = None,
         ws: bool = False,
         compression: SlimeCompression = SlimeCompression.NoCompression,
+        comp_level: int = 1,
         body_size: int = 1024 * 1024 * 10,
     ) -> None:
         global AVAILABLE_METHOD
@@ -199,6 +208,7 @@ class Routes:
         self.ws: bool = ws
         self.compression: int = compression.value
         self.body_size: int = body_size
+        self.comp_level: int = comp_level
 
     def __hash__(self) -> int:
         return hash((self.path, self.method))
@@ -266,7 +276,7 @@ class Slime:
                             result.append((handler, is_async))
                         break
                     else:
-                        error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][0] else 'sync'} type similar to route handler for Path: {path},Method: {method}"
+                        error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][0][1] else 'sync'} type similar to route handler ({call_handler['handler'][0][0].__name__}) for Path: {path},Method: {method}"
                         raise InvalidMiddlewareHandlerType(error)
 
         if not found and not is_plugin:
@@ -397,7 +407,11 @@ class Slime:
         return False
 
     def __apply_plugin(
-        self, is_async: bool, path: str, method: str | List[str], plugin_instance: Type
+        self,
+        is_async: bool,
+        path: str,
+        method: str | List[str],
+        plugin_instance: SlimeMiddleware,
     ):
         found: bool = False
 
@@ -432,12 +446,13 @@ class Slime:
                 "SlimePlugin class should have atleast one method middle_before or middle_after"
             )
 
-    def use(self, obj: Type, method: List[str] | str = "*", path="*") -> None:
-        if not isinstance(obj, type):
-            raise InvalidMiddlewareHandlerType(
-                'SlimePlugin has to be type class with "middle_before" or "middle_after" method'
+    def use(
+        self, plugin_instance: Any, method: List[str] | str = "*", path="*"
+    ) -> None:
+        if not isinstance(plugin_instance, SlimeMiddleware):
+            raise ValueError(
+                "Not a valid plugin definition, It has to be derived from SlimeMiddleware class"
             )
-        plugin_instance = obj()
         if path == "*":
             route_details = {
                 (route.path, route.method): handler["handler"][0][1]  # type: ignore
@@ -464,20 +479,34 @@ class Slime:
                         if route[1] in method:
                             self.__apply_plugin(
                                 is_async=is_async,
-                                method=method,
+                                method=route[1],
                                 path=route[0],
                                 plugin_instance=plugin_instance,
                             )
 
         else:
-            self.__apply_plugin(
-                is_async=self._check_handler_type_for_route(
-                    method=method if isinstance(method, str) else method[0], path=path
-                ),
-                method=method,
-                path=path,
-                plugin_instance=plugin_instance,
-            )
+            if method == "*":
+                global AVAILABLE_METHOD
+                for method_all in AVAILABLE_METHOD:
+                    self.__apply_plugin(
+                        is_async=self._check_handler_type_for_route(
+                            method=method_all,
+                            path=path,
+                        ),
+                        method=method_all,
+                        path=path,
+                        plugin_instance=plugin_instance,
+                    )
+            else:
+                self.__apply_plugin(
+                    is_async=self._check_handler_type_for_route(
+                        method=method if isinstance(method, str) else method[0],
+                        path=path,
+                    ),
+                    method=method,
+                    path=path,
+                    plugin_instance=plugin_instance,
+                )
 
     def __apply_route(
         self,
@@ -487,11 +516,29 @@ class Slime:
         stream: str | None,
         ws: bool,
         compression: SlimeCompression,
+        comp_level: int,
         body_size: int,
     ):
+        if not isinstance(comp_level, int):
+            raise ValueError("comp_level should be of type <int>")
+        if compression == SlimeCompression.Gzip:
+            if comp_level < 0 or comp_level > 9:
+                raise ValueError(
+                    "Invalid Comp level for Gzip, Range is between 0 and 9"
+                )
+        elif compression == SlimeCompression.Brotli:
+            if comp_level < 0 or comp_level > 11:
+                raise ValueError(
+                    "Invalid Comp level for Brotli, Range is between 0 and 11"
+                )
+        else:
+            if comp_level < 1 or comp_level > 22:
+                raise ValueError(
+                    "Invalid Comp level for Zstd, Range is between 1 and 22"
+                )
         if not isinstance(body_size, int):
             raise ValueError("body_size should be of type <int> represent bytes")
-        new_route = Routes(path, method, stream, ws, compression, body_size)
+        new_route = Routes(path, method, stream, ws, compression, comp_level, body_size)
 
         if new_route not in self.__routes:
             self.__routes[new_route] = {
@@ -512,11 +559,13 @@ class Slime:
     def route(
         self,
         path: str = "/",
-        method: str | List[str] = "GET",
+        method: str | List[str] = "*",
         stream: str | None = None,
         ws: bool = False,
         compression: SlimeCompression = SlimeCompression.NoCompression,
+        comp_level: int = 1,
         body_size: int = 1024 * 1024 * 10,
+        plugin: SlimeMiddleware | List[SlimeMiddleware] | None = None,
     ) -> Callable:
         def wrapper(route_handler) -> Callable:
             if route_handler is None or not callable(route_handler):
@@ -535,6 +584,7 @@ class Slime:
                         stream=stream,
                         ws=ws,
                         compression=compression,
+                        comp_level=comp_level,
                         body_size=body_size,
                     )
             else:
@@ -548,6 +598,7 @@ class Slime:
                             ws=ws,
                             path=path,
                             compression=compression,
+                            comp_level=comp_level,
                             body_size=body_size,
                         )
                 else:
@@ -558,8 +609,16 @@ class Slime:
                         ws=ws,
                         path=path,
                         compression=compression,
+                        comp_level=comp_level,
                         body_size=body_size,
                     )
+            if plugin is not None:
+                if not isinstance(plugin, list) and not isinstance(
+                    plugin, SlimeMiddleware
+                ):
+                    raise ValueError("Plugin is a list type")
+                for plug in plugin if isinstance(plugin, list) else [plugin]:
+                    self.use(method=method, path=path, plugin_instance=plug)
             return route_handler
 
         return wrapper
@@ -567,10 +626,11 @@ class Slime:
     def stream(
         self,
         path: str = "/",
-        method: List[str] | str = "GET",
+        method: List[str] | str = "*",
         content: str = "text/plain",
         compression: SlimeCompression = SlimeCompression.NoCompression,
         body_size: int = 1024 * 1024 * 10,
+        plugin: SlimeMiddleware | List[SlimeMiddleware] | None = None,
     ) -> Callable:
         def wrapper(stream_handler) -> Callable:
             if stream_handler is None or not callable(stream_handler):
@@ -588,8 +648,22 @@ class Slime:
                 for method_col in dict.fromkeys(method):
                     self.__apply_route(
                         compression=compression,
+                        comp_level=1,
                         handler=stream_handler,
                         method=method_col,
+                        path=path,
+                        stream=content,
+                        ws=False,
+                        body_size=body_size,
+                    )
+            elif method == "*":
+                global AVAILABLE_METHOD
+                for all_method in AVAILABLE_METHOD:
+                    self.__apply_route(
+                        compression=compression,
+                        comp_level=1,
+                        handler=stream_handler,
+                        method=all_method,
                         path=path,
                         stream=content,
                         ws=False,
@@ -598,6 +672,7 @@ class Slime:
             else:
                 self.__apply_route(
                     compression=compression,
+                    comp_level=1,
                     handler=stream_handler,
                     method=method,
                     path=path,
@@ -605,12 +680,23 @@ class Slime:
                     ws=False,
                     body_size=body_size,
                 )
+            if plugin is not None:
+                if not isinstance(plugin, list) and not isinstance(
+                    plugin, SlimeMiddleware
+                ):
+                    raise ValueError("Plugin is a list type")
+                for plug in plugin if isinstance(plugin, list) else [plugin]:
+                    self.use(method=method, path=path, plugin_instance=plug)
             return stream_handler
 
         return wrapper
 
     def websocket(
-        self, path: str = "/", method: str = "GET", body_size: int = 1024 * 1024 * 10
+        self,
+        path: str = "/",
+        method: str = "*",
+        body_size: int = 1024 * 1024 * 10,
+        plugin: SlimeMiddleware | List[SlimeMiddleware] | None = None,
     ) -> Callable:
         def wrapper(websocket_handler) -> Callable:
             if websocket_handler is None or not callable(websocket_handler):
@@ -620,15 +706,50 @@ class Slime:
             setattr(websocket_handler, "__path", path)
             setattr(websocket_handler, "__method", method)
             setattr(websocket_handler, "__set_docs", False)
-            self.__apply_route(
-                compression=SlimeCompression.NoCompression,
-                handler=websocket_handler,
-                method=method,
-                path=path,
-                stream=None,
-                ws=True,
-                body_size=body_size,
-            )
+
+            if isinstance(method, list):
+                for method_col in dict.fromkeys(method):
+                    self.__apply_route(
+                        compression=SlimeCompression.NoCompression,
+                        comp_level=1,
+                        handler=websocket_handler,
+                        method=method_col,
+                        path=path,
+                        stream=None,
+                        ws=True,
+                        body_size=body_size,
+                    )
+            elif method == "*":
+                global AVAILABLE_METHOD
+                for all_method in AVAILABLE_METHOD:
+                    self.__apply_route(
+                        compression=SlimeCompression.NoCompression,
+                        comp_level=1,
+                        handler=websocket_handler,
+                        method=all_method,
+                        path=path,
+                        stream=None,
+                        ws=True,
+                        body_size=body_size,
+                    )
+            else:
+                self.__apply_route(
+                    compression=SlimeCompression.NoCompression,
+                    comp_level=1,
+                    handler=websocket_handler,
+                    method=method,
+                    path=path,
+                    stream=None,
+                    ws=True,
+                    body_size=body_size,
+                )
+            if plugin is not None:
+                if not isinstance(plugin, list) and not isinstance(
+                    plugin, SlimeMiddleware
+                ):
+                    raise ValueError("Plugin is a list type")
+                for plug in plugin if isinstance(plugin, list) else [plugin]:
+                    self.use(method=method, path=path, plugin_instance=plug)
             return websocket_handler
 
         return wrapper
@@ -800,6 +921,7 @@ class Slime:
         secret_key: str | None = None,
         dev: bool = False,
         app_state: Dict[str, Any] = {},
+        workers: int = 0,
     ) -> None:
         if dev and len(self.__docs) != 0:
             self.generate_docs()
@@ -809,13 +931,24 @@ class Slime:
 
             secret_key = secrets.token_urlsafe(30)
 
+        if not isinstance(workers, int):
+            raise ValueError("worker needs to be in int type")
         if self.__app_start is not None:
             self.__app_start()
 
-        from .web import web
+        from . import web_extras
 
         try:
-            web.init_web(self, host, port, secret_key, dev, app_state)
+            web_extras.web.init_web(
+                self,
+                host,
+                port,
+                secret_key,
+                dev,
+                app_state,
+                workers,
+                web_extras.slime_async_pipeline,
+            )
         except Exception as e:
             if self.__app_end is not None:
                 self.__app_end(e)

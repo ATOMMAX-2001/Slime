@@ -195,6 +195,7 @@ class Routes:
         stream: str | None = None,
         ws: bool = False,
         compression: SlimeCompression = SlimeCompression.NoCompression,
+        comp_level: int = 1,
         body_size: int = 1024 * 1024 * 10,
     ) -> None:
         global AVAILABLE_METHOD
@@ -207,6 +208,7 @@ class Routes:
         self.ws: bool = ws
         self.compression: int = compression.value
         self.body_size: int = body_size
+        self.comp_level: int = comp_level
 
     def __hash__(self) -> int:
         return hash((self.path, self.method))
@@ -274,7 +276,7 @@ class Slime:
                             result.append((handler, is_async))
                         break
                     else:
-                        error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][0] else 'sync'} type similar to route handler for Path: {path},Method: {method}"
+                        error = f"Middle {middle_kind} handler should be of {'async' if call_handler['handler'][0][1] else 'sync'} type similar to route handler ({call_handler['handler'][0][0].__name__}) for Path: {path},Method: {method}"
                         raise InvalidMiddlewareHandlerType(error)
 
         if not found and not is_plugin:
@@ -514,11 +516,29 @@ class Slime:
         stream: str | None,
         ws: bool,
         compression: SlimeCompression,
+        comp_level: int,
         body_size: int,
     ):
+        if not isinstance(comp_level, int):
+            raise ValueError("comp_level should be of type <int>")
+        if compression == SlimeCompression.Gzip:
+            if comp_level < 0 or comp_level > 9:
+                raise ValueError(
+                    "Invalid Comp level for Gzip, Range is between 0 and 9"
+                )
+        elif compression == SlimeCompression.Brotli:
+            if comp_level < 0 or comp_level > 11:
+                raise ValueError(
+                    "Invalid Comp level for Brotli, Range is between 0 and 11"
+                )
+        else:
+            if comp_level < 1 or comp_level > 22:
+                raise ValueError(
+                    "Invalid Comp level for Zstd, Range is between 1 and 22"
+                )
         if not isinstance(body_size, int):
             raise ValueError("body_size should be of type <int> represent bytes")
-        new_route = Routes(path, method, stream, ws, compression, body_size)
+        new_route = Routes(path, method, stream, ws, compression, comp_level, body_size)
 
         if new_route not in self.__routes:
             self.__routes[new_route] = {
@@ -543,6 +563,7 @@ class Slime:
         stream: str | None = None,
         ws: bool = False,
         compression: SlimeCompression = SlimeCompression.NoCompression,
+        comp_level: int = 1,
         body_size: int = 1024 * 1024 * 10,
         plugin: SlimeMiddleware | List[SlimeMiddleware] | None = None,
     ) -> Callable:
@@ -563,6 +584,7 @@ class Slime:
                         stream=stream,
                         ws=ws,
                         compression=compression,
+                        comp_level=comp_level,
                         body_size=body_size,
                     )
             else:
@@ -576,6 +598,7 @@ class Slime:
                             ws=ws,
                             path=path,
                             compression=compression,
+                            comp_level=comp_level,
                             body_size=body_size,
                         )
                 else:
@@ -586,6 +609,7 @@ class Slime:
                         ws=ws,
                         path=path,
                         compression=compression,
+                        comp_level=comp_level,
                         body_size=body_size,
                     )
             if plugin is not None:
@@ -624,6 +648,7 @@ class Slime:
                 for method_col in dict.fromkeys(method):
                     self.__apply_route(
                         compression=compression,
+                        comp_level=1,
                         handler=stream_handler,
                         method=method_col,
                         path=path,
@@ -636,6 +661,7 @@ class Slime:
                 for all_method in AVAILABLE_METHOD:
                     self.__apply_route(
                         compression=compression,
+                        comp_level=1,
                         handler=stream_handler,
                         method=all_method,
                         path=path,
@@ -646,6 +672,7 @@ class Slime:
             else:
                 self.__apply_route(
                     compression=compression,
+                    comp_level=1,
                     handler=stream_handler,
                     method=method,
                     path=path,
@@ -684,6 +711,7 @@ class Slime:
                 for method_col in dict.fromkeys(method):
                     self.__apply_route(
                         compression=SlimeCompression.NoCompression,
+                        comp_level=1,
                         handler=websocket_handler,
                         method=method_col,
                         path=path,
@@ -696,6 +724,7 @@ class Slime:
                 for all_method in AVAILABLE_METHOD:
                     self.__apply_route(
                         compression=SlimeCompression.NoCompression,
+                        comp_level=1,
                         handler=websocket_handler,
                         method=all_method,
                         path=path,
@@ -706,6 +735,7 @@ class Slime:
             else:
                 self.__apply_route(
                     compression=SlimeCompression.NoCompression,
+                    comp_level=1,
                     handler=websocket_handler,
                     method=method,
                     path=path,

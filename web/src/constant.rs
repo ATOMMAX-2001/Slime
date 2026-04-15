@@ -1,1 +1,1 @@
-pub static SERVER: &str = "SlimeV0.1.7";
+pub static SERVER: &str = "SlimeV0.2.7";
