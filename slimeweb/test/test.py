@@ -1,7 +1,7 @@
 import asyncio
 
 from lib import slime
-from lib.plugin import Cors
+from lib.plugin.cors import Cors
 from pydantic import BaseModel
 
 app = slime.Slime(__file__)
@@ -139,4 +139,5 @@ def end_app(args):
 
 if __name__ == "__main__":
     # app.use(SampleMiddle(), method=["GET", "POST"])
+    app.use(Cors())
     app.serve(app_state={"counter": 0})

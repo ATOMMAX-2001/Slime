@@ -18,32 +18,32 @@ It is designed for developers who want Python developer experience with a Rust-p
 ## Why Slime?
 Slime isn’t just another Python framework, it’s built for developers who want speed, control, and simplicity without compromise.
 
-- #### Rust Performance, Python Simplicity
+- **Rust Performance, Python Simplicity:**
 Write clean, expressive Python code while Slime handles execution on a high-performance Rust core.
 
-- #### No-GIL Execution (True Concurrency)
+- **No-GIL Execution (True Concurrency):**
 Break free from Python’s GIL limitations.Run highly concurrent workloads efficiently without complex workarounds.You can still use with-GIL (Refer Slime Cli section).
 
-- #### Minimal Yet Powerful
+- **Minimal Yet Powerful:**
 No bloated abstractions. No unnecessary magic.Slime keeps things simple, predictable, and fast to learn.
 
-- #### Extensible by Design
+- **Extensible by Design:**
 Create your own middleware, plugins, and request pipelines with ease.
 
-- #### Built for Real-Time Systems
+- **Built for Real-Time Systems:**
 Streaming and WebSocket support are built-in, making Slime ideal for real-time applications like chats, dashboards, and live data systems.
 
-- #### Flexible Handler Model
+- **Flexible Handler Model:**
 Write both sync and async handlers seamlessly. Choose what fits your use case without being forced into one style.
 
 
-- #### Clean and Simple API Design
+- **Clean and Simple API Design:**
 A straightforward and intuitive API that avoids unnecessary complexity, making development faster and more enjoyable.
 
-- #### Scales with Your Needs
+- **Scales with Your Needs:**
 Start small and scale to high-performance workloads without switching frameworks or re-architecting your application. Slime performance scales by cpu cores
 
-- #### Production-Ready by Default
+- **Production-Ready by Default:**
 Minimal setup, powerful features, and a smooth developer experience from start to finish.
 
 ## Features
@@ -151,6 +151,7 @@ if __name__ == "__main__":
     slime rungw main         -> Run slime with GIL and watch (auto-reload)
     slime add packageName    -> Add lib to the project deps
     slime remove packageName -> Remove lib from the project deps
+    slime version            -> Show slime version
 ```
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "SlimeWeb"
-version = "0.1.8"
+version = "0.2.0"
 description = "A Simple fast lightweight webframework lib for python"
 keywords = ["web framework", "python web", "lightweight", "async", "backend","sync","rust"]
 authors = [{ name= "S.ABILASH", email="abinix01@gmail.com" }]

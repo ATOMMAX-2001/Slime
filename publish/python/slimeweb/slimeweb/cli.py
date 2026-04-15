@@ -10,6 +10,8 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+__version__ = "0.2.0"
+
 
 def create_project(name: str):
     if shutil.which("uv") is None:
@@ -159,7 +161,7 @@ def display_logo():
     print("   ___ \\| | | '_ ` _ \\ / _ \\ \\/  \\/ / _ \\ '_ \\ ")
     print("  ____) | | | | | | | |  __/\\  /\\  /  __/ |_) |")
     print(" |_____/|_|_|_| |_| |_|\\___| \\/  \\/ \\___|_.__/ ")
-    print("Version: 0.2.0\t\t\t Author: S.Abilash")
+    print(f"Version: {__version__}\t\t\t Author: S.Abilash")
 
 
 def main():
@@ -204,14 +206,19 @@ def main():
     elif command == "add":
         if len(args) < 2:
             print("Usage: slime add slimeweb")
+            sys.exit(1)
         add_lib(args[1:])
     elif command == "remove":
         if len(args) != 2:
             print("Usage: slime remove slimeweb")
             sys.exit(1)
         remove_lib(args[1])
+    elif command == "version":
+        if len(args) != 1:
+            print("Usage: slime version")
+            sys.exit(1)
+
     else:
-        print(command in ["run", "runw"], flush=True)
         print(f"Unknown command: {command}")
 
 

@@ -1,9 +1,13 @@
+# AUTHOR: S.ABILASH
+# Email: abinix01@gmail.com
+
+
 import pydantic
 
-import web
+from .web import web
 
 
-def validate_me(self, obj, raise_err=True):
+def validate_me(self, obj: pydantic.BaseModel, raise_err: bool = True):
     try:
         obj.model_validate(self.json)
         return None
