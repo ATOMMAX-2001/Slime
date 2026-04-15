@@ -21,24 +21,24 @@ class SampleMiddle(slime.SlimeMiddleware):
         resp.set_header("plugin_after", "works")
 
 
-# @app.websocket(path="/chat", method="GET")
-# async def chatty(req, resp):
-#     await asyncio.sleep(1)
+@app.websocket(path="/chat", method="GET")
+def chatty(req, resp):
+    # await asyncio.sleep(1)
 
-#     def read_me(msg):
-#         if not resp.is_closed():
-#             resp.send(msg)
+    def read_me(msg):
+        if not resp.is_closed():
+            resp.send(msg)
 
-#     resp.on_message(read_me)
+    resp.on_message(read_me)
 
-#     def close_me():
-#         print("closed")
+    def close_me():
+        print("closed")
 
-#     def error_me(mes):
-#         print(mes)
+    def error_me(mes):
+        print(mes)
 
-#     resp.on_error(error_me)
-#     resp.on_close(close_me)
+    resp.on_error(error_me)
+    resp.on_close(close_me)
 
 
 @app.route(path="/plain", method="GET")

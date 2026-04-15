@@ -95,9 +95,11 @@ impl Route {
 pub enum PyRequestWorker {
     Http(PyRequest),
     AHttp(PyAsyncRequest),
-    AStream(PyRequestStream),
     AResponseHttp(PyAsyncResponseHttp),
+    AStream(PyRequestStream),
     Stream(PyRequestStream),
+    AWebsocket(PyRequestAsyncWebSocket),
+    AResponseWebsocket(PyAsyncResponseWebSocket),
     WebSocket(PyRequestWebSocket),
 }
 
@@ -118,6 +120,11 @@ pub struct PyAsyncResponseHttp {
     pub response_channel: oneshot::Sender<Result<SlimeResponse, PyErr>>,
 }
 
+pub struct PyAsyncResponseWebSocket {
+    pub response: Py<SlimeWebSocketResponse>,
+    pub response_channel: oneshot::Sender<Result<SlimeWebSocketResponse, PyErr>>,
+}
+
 pub struct PyAsyncRequest {
     pub handler: Arc<Vec<Py<PyAny>>>,
     pub request: SlimeRequest,
@@ -136,6 +143,14 @@ pub struct PyRequestWebSocket {
     pub request: SlimeRequest,
     pub response: oneshot::Sender<Result<SlimeWebSocketResponse, PyErr>>,
     pub conn: WebSocketConn,
+}
+
+pub struct PyRequestAsyncWebSocket {
+    pub handler: Arc<Vec<Py<PyAny>>>,
+    pub request: SlimeRequest,
+    pub response: oneshot::Sender<Result<SlimeWebSocketResponse, PyErr>>,
+    pub conn: WebSocketConn,
+    pub worker: mpsc::Sender<PyRequestWorker>,
 }
 
 #[derive(Clone)]
@@ -485,6 +500,7 @@ impl SlimeServer {
                                     worker_tx.clone(),
                                     slime_request,
                                     handler,
+                                    is_async,
                                 )
                                 .await
                                 .into_response();
@@ -663,6 +679,7 @@ async fn websocket_handler(
     worker: mpsc::Sender<PyRequestWorker>,
     slime_request: SlimeRequest,
     handler: Arc<Vec<Py<PyAny>>>,
+    is_async: bool,
 ) -> impl IntoResponse {
     ws.on_upgrade(async move |socket| {
         {
@@ -684,20 +701,38 @@ async fn websocket_handler(
                 }
             });
             let (worker_tx, worker_resp) = oneshot::channel::<PyResult<SlimeWebSocketResponse>>();
-
-            if let Err(err) = worker
-                .send(PyRequestWorker::WebSocket(PyRequestWebSocket {
-                    handler: handler,
-                    request: slime_request,
-                    response: worker_tx,
-                    conn: web_conn,
-                }))
-                .await
-            {
-                println!(
-                    "Worker down cant able to handle the request (reason) => {}",
-                    err.to_string()
-                );
+            if is_async {
+                let worker_clone = worker.clone();
+                if let Err(err) = worker
+                    .send(PyRequestWorker::AWebsocket(PyRequestAsyncWebSocket {
+                        handler: handler,
+                        request: slime_request,
+                        response: worker_tx,
+                        conn: web_conn,
+                        worker: worker_clone,
+                    }))
+                    .await
+                {
+                    println!(
+                        "Worker down cant able to handle the async request (reason) => {}",
+                        err.to_string()
+                    );
+                }
+            } else {
+                if let Err(err) = worker
+                    .send(PyRequestWorker::WebSocket(PyRequestWebSocket {
+                        handler: handler,
+                        request: slime_request,
+                        response: worker_tx,
+                        conn: web_conn,
+                    }))
+                    .await
+                {
+                    println!(
+                        "Worker down cant able to handle the request (reason) => {}",
+                        err.to_string()
+                    );
+                }
             }
 
             if let Ok(Ok(resp)) = worker_resp.await {
@@ -891,7 +926,7 @@ fn handle_python_call(
                 }
 
                 PyRequestWorker::AStream(req) => {
-                    match (Py::new(py, SlimeResponse::new()), Py::new(py, req.request)) {
+                    match (Py::new(py, req.response), Py::new(py, req.request)) {
                         (Ok(response_py), Ok(request_py)) => {
                             if let Ok(co) = async_pipeline
                                 .call1(py, (&(*req.handler), request_py, &response_py))
@@ -902,7 +937,10 @@ fn handle_python_call(
                                 ) {
                                     Ok(co_fut) => {
                                         runtime_handler.spawn(async move {
-                                            let _ = co_fut.await;
+                                            if let Err(err) = co_fut.await{
+                                                println!("Error: Failed to run async stream handler (reason) -> {}",err);
+                                            }
+
                                         });
                                     }
                                     Err(err) => {
@@ -934,6 +972,70 @@ fn handle_python_call(
                         _ => {
                             println!(
                                 "ERROR: Cant able to create reqeust and response handler for stream"
+                            );
+                        }
+                    }
+                }
+                PyRequestWorker::AResponseWebsocket(req) => {
+                    let result = req.response.borrow(py).clone();
+                    let _ = req.response_channel.send(Ok(result));
+                }
+                PyRequestWorker::AWebsocket(req) => {
+                    let response_obj = Py::new(
+                        py,
+                        SlimeWebSocketResponse {
+                            conn: req.conn,
+                            on_message_handler: Arc::new(None),
+                            on_close_handler: Arc::new(None),
+                            on_error_handler: Arc::new(None),
+                            on_ping_handler: Arc::new(None),
+                        },
+                    );
+                    match (Py::new(py, req.request), response_obj) {
+                        (Ok(request_py), Ok(response_py)) => {
+                            match async_pipeline
+                                .call1(py, (&(*req.handler), request_py, &response_py))
+                            {
+                                Ok(co) => {
+                                    match py_asyncio::into_future_with_locals(
+                                        &local_task_events,
+                                        co.into_bound(py),
+                                    ) {
+                                        Ok(co_fut) => {
+                                            runtime_handler.spawn(async move {
+                                                if let Err(err) = co_fut.await{
+                                                    println!("Error: Failed to run async stream handler (reason) -> {}",err);
+                                                    let _ = req.response.send(Err(err));
+                                                }else{
+                                                    let _ = req
+                                                        .worker
+                                                        .send(PyRequestWorker::AResponseWebsocket(
+                                                            PyAsyncResponseWebSocket {
+                                                                response: response_py,
+                                                                response_channel: req.response,
+                                                            },
+                                                        ))
+                                                        .await;
+                                                }
+
+                                            });
+                                        }
+                                        Err(err) => {
+                                            println!("ERROR: {}", err);
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    let _ = req
+                                        .response
+                                        .send(Err(pyo3::exceptions::PyRuntimeError::new_err(err)));
+                                }
+                            }
+                        }
+                        _ => {
+                            let _ = req.response.send(Err(pyo3::exceptions::PyRuntimeError::new_err("ERROR: Cant able to create reqeust and response handler for websocket")));
+                            println!(
+                                "ERROR: Cant able to create reqeust and response handler for websocket"
                             );
                         }
                     }
