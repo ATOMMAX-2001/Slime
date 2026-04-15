@@ -70,7 +70,7 @@ def land_render(req, resp):
 
 @app.route(path="/", method=["GET", "POST", "OPTIONS"], plugin=Cors())
 async def land(req, resp):
-    # req.validate(Student)
+    req.validate(Student)
     counter = req.get_state("counter")
     html = req.render(
         "hello.html", **{"name": "abilash", "age": 24, "counter": counter}
