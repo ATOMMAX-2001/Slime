@@ -8,7 +8,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "watchdog",
-    "pydantic"
+    "pydantic",
+    "uvloop; sys_platform == 'linux'"
 ]
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -23,7 +24,7 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/ATOMMAX-2001/Slime"
 Issues = "https://github.com/ATOMMAX-2001/Slime/issues"
-
+Stars ="https://github.com/ATOMMAX-2001/Slime/stargazers"
 
 
 
