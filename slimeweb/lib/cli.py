@@ -88,7 +88,7 @@ class RestartSlimeHandler(FileSystemEventHandler):
         if self.process:
             print("INFO: File Change detected, Restarting...")
             self.process.terminate()
-            self.process.wait(timeout=2)
+            self.process.wait(timeout=3)
         os.environ["PYTHON_GIL"] = "0" if self.no_gil else "1"
         command = ["uv", "run", "python", str(self.script_path)]
         self.process = sp.Popen(command, env=os.environ.copy())

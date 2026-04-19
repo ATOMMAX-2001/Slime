@@ -152,7 +152,7 @@ fn run_async_app_start(
                         co.into_bound(py),
                     ) {
                         Ok(co_fut) => {
-                            runtime_handler.spawn(async move {
+                            runtime_handler.block_on(async move {
                                 if let Err(err) = co_fut.await {
                                     println!(
                                         "Error: Failed to run async app start handler (reason) -> {}",
