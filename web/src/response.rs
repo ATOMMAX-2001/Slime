@@ -249,6 +249,11 @@ impl SlimeResponse {
         return Ok(());
     }
 
+    #[getter]
+    fn status(&self) -> PyResult<u16> {
+        return Ok(self.status);
+    }
+
     fn set_status(&mut self, status: u16) -> PyResult<()> {
         self.status = status;
         return Ok(());

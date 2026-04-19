@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import TimedRotatingFileHandler
 from typing import Literal
 
 from ..slime import SlimeMiddleware
@@ -7,16 +8,29 @@ from ..slime import SlimeMiddleware
 class ReqLog(SlimeMiddleware):
     def __init__(
         self,
-        log_at: Literal["before", "after", "both"] = "before",
-        log_kind: Literal["file", "stream"] = "file",
+        log_kind: Literal["file", "stream"] = "stream",
     ) -> None:
-        if log_at not in ["before", "after", "both"]:
-            raise ValueError(
-                "logger kind should be one of the list [before,after,both]"
+        if log_kind not in ["file", "stream"]:
+            raise ValueError("There is only 2 type of logger <File> or <Stream>")
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        self.logger = logging.getLogger("SlimeLog")
+        self.logger.setLevel(logging.INFO)
+        if log_kind == "file":
+            file_handler = TimedRotatingFileHandler(
+                "slimerequest.log", when="midnight", interval=1, backupCount=0
             )
+            file_handler.setFormatter(formatter)
+            file_handler.setLevel(logging.INFO)
+            self.logger.addHandler(file_handler)
+        else:
+            stream_handler = logging.StreamHandler()
+            stream_handler.setFormatter(formatter)
+            stream_handler.setLevel(logging.INFO)
+            self.logger.addHandler(stream_handler)
 
     def middle_before(self, req, resp):
         pass
 
     def middle_after(self, req, resp):
-        pass
+        message = f"{req.client} {req.path} {req.method} => {resp.status}"
+        self.logger.info(message)

@@ -750,7 +750,9 @@ class Slime:
                 ):
                     raise ValueError("Plugin is a list type")
                 for plug in plugin if isinstance(plugin, list) else [plugin]:
-                    self.use(method=method, path=path, plugin_instance=plug)
+                    self.use(
+                        method=method, path=path, plugin_instance=copy.deepcopy(plug)
+                    )
             return websocket_handler
 
         return wrapper

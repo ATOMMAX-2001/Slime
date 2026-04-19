@@ -2,6 +2,7 @@ import asyncio
 
 from lib import Slime, SlimeCompression, SlimeDocs, SlimeMiddleware
 from lib.plugin.cors import Cors
+from lib.plugin.logger import ReqLog
 from pydantic import BaseModel
 
 app = Slime(__file__)
@@ -51,7 +52,7 @@ def land_plain_post(req, resp):
     return resp.plain("hello world from post")
 
 
-@app.route(path="/json", plugin=Cors())
+@app.route(path="/json", plugin=[Cors()])
 async def land_json(req, resp):
     await asyncio.sleep(0)
     return resp.json({"hello": "world"})
@@ -66,7 +67,11 @@ def land_render(req, resp):
     return resp.html(html)
 
 
-@app.route(path="/", method=["GET", "POST", "OPTIONS"], plugin=Cors())
+@app.route(
+    path="/",
+    method=["GET", "POST", "OPTIONS"],
+    plugin=[Cors(), ReqLog(log_kind="file")],
+)
 async def land(req, resp):
     req.validate(Student)
     counter = req.get_state("counter")
@@ -128,7 +133,6 @@ def upload_test(req, resp):
 @app.start()
 async def start_app():
     await asyncio.sleep(2)
-    raise Exception("hello world")
     print("app has been started")
 
 
@@ -140,4 +144,5 @@ def end_app(args):
 if __name__ == "__main__":
     # app.use(SampleMiddle(), method=["GET", "POST"])
     app.use(Cors())
+    app.use(ReqLog(log_kind="stream"))
     app.serve(app_state={"counter": 0})
