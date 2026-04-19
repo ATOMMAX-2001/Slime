@@ -47,7 +47,7 @@ def land_plain(req, resp):
     return resp.plain("ok" * 3000)
 
 
-@app.route(path="/plain", method="POST")
+@app.route(path="/plain", method="POST", plugin=ReqLog(log_kind="file"))
 def land_plain_post(req, resp):
     return resp.plain("hello world from post")
 
@@ -70,7 +70,7 @@ def land_render(req, resp):
 @app.route(
     path="/",
     method=["GET", "POST", "OPTIONS"],
-    plugin=[Cors(), ReqLog(log_kind="file")],
+    plugin=[Cors()],
 )
 async def land(req, resp):
     req.validate(Student)

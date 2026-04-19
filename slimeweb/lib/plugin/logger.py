@@ -1,4 +1,6 @@
 import logging
+import os
+import uuid
 from logging.handlers import TimedRotatingFileHandler
 from typing import Literal
 
@@ -13,11 +15,13 @@ class ReqLog(SlimeMiddleware):
         if log_kind not in ["file", "stream"]:
             raise ValueError("There is only 2 type of logger <File> or <Stream>")
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        self.logger = logging.getLogger("SlimeLog")
+        self.logger = logging.getLogger(f"SlimeLog_{uuid.uuid4()}")
+        self.logger.propagate = False
         self.logger.setLevel(logging.INFO)
         if log_kind == "file":
+            os.makedirs("logs", exist_ok=True)
             file_handler = TimedRotatingFileHandler(
-                "slimerequest.log", when="midnight", interval=1, backupCount=0
+                "logs/slimerequest.log", when="midnight", interval=1, backupCount=0
             )
             file_handler.setFormatter(formatter)
             file_handler.setLevel(logging.INFO)
