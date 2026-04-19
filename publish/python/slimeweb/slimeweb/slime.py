@@ -22,6 +22,7 @@ class SlimeCompression(Enum):
     Gzip = 1
     Brotli = 2
     Zstd = 3
+    All = 4
 
 
 class SlimeMiddleware:
@@ -749,7 +750,9 @@ class Slime:
                 ):
                     raise ValueError("Plugin is a list type")
                 for plug in plugin if isinstance(plugin, list) else [plugin]:
-                    self.use(method=method, path=path, plugin_instance=plug)
+                    self.use(
+                        method=method, path=path, plugin_instance=copy.deepcopy(plug)
+                    )
             return websocket_handler
 
         return wrapper
@@ -933,8 +936,12 @@ class Slime:
 
         if not isinstance(workers, int):
             raise ValueError("worker needs to be in int type")
+        async_app_start: Callable | None = None
         if self.__app_start is not None:
-            self.__app_start()
+            if inspect.iscoroutinefunction(self.__app_start):
+                async_app_start = self.__app_start
+            else:
+                self.__app_start()
 
         from . import web_extras
 
@@ -948,6 +955,7 @@ class Slime:
                 app_state,
                 workers,
                 web_extras.slime_async_pipeline,
+                async_app_start,
             )
         except Exception as e:
             if self.__app_end is not None:

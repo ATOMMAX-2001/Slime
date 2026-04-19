@@ -274,6 +274,9 @@ def end_app(args):
 Both **app.start()** and **app.end()** are optional. When **app.end()** runs, it receives one argument, it can be None or an exception. If the app stops because of server shutdown, that exception is passed in, so you can handle cleanup or run any final logic before the app closes.
 
 
+> **NOTE:**  @app.start can also support async function but not @app.end()
+
+
 
 ### App State
 
@@ -625,6 +628,7 @@ These are available from the slimeweb package. Please check the **API** referenc
   resp.set_cookie(key: str,value: str) -> None
   resp.set_sign_cookie(key:str,value: str,secret: str) -> None
   resp.set_header(key: str,value: str) -> None
+  resp.status -> int
   resp.set_status(status_id: int) -> None
   # Here status is optional parameter 
   resp.plain(data: str,status=200)
@@ -681,6 +685,7 @@ from slimeweb import SlimeCompression #Enum
     SlimeCompression.Gzip
     SlimeCompression.Brotli
     SlimeCompression.Zstd
+    SlimeCompression.All  # based on the request slime will pick the best compression
 ```
 
 ### SlimeCompressionLevel
