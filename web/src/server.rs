@@ -862,6 +862,7 @@ fn handle_python_call(
                                     Ok(co_fut) => {
                                         runtime_handler.spawn(async move {
                                             if let Err(err) = co_fut.await {
+                                                println!("Async Error: {}", err);
                                                 let _ = req.response.send(Err(err));
                                             } else {
                                                 let _ = req

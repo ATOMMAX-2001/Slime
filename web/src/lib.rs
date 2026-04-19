@@ -4,14 +4,14 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::types::PyModule;
-use pyo3_async_runtimes::TaskLocals;
 use std::sync::Arc;
-use tokio::runtime::Builder;
+use tokio::runtime::{Builder, Handle};
 
 mod request;
 mod response;
 mod server;
 
+use pyo3_async_runtimes::{self as py_asyncio, TaskLocals};
 use server::SlimeServer;
 mod constant;
 use mimalloc_rust::*;
@@ -30,6 +30,7 @@ pub fn init_web(
     app_states: Py<PyDict>,
     workers: usize,
     async_pipeline: Py<PyAny>,
+    async_app_start: Py<PyAny>,
 ) -> PyResult<()> {
     println!("Initializing...");
     let slime_obj_bound = slime_obj.bind(py);
@@ -107,6 +108,12 @@ pub fn init_web(
         return local_event;
     });
 
+    run_async_app_start(
+        async_app_start,
+        &local_event_loop_task,
+        runtime_handler.clone(),
+    );
+
     let worker_txs = server::spawn_python_workers(
         worker_count,
         runtime_handler.clone(),
@@ -129,6 +136,45 @@ pub fn init_web(
 
     py.detach(|| runtime.block_on(server.server_run()))?;
     Ok(())
+}
+
+fn run_async_app_start(
+    async_app_start: Py<PyAny>,
+    local_event_loop_task: &TaskLocals,
+    runtime_handler: Handle,
+) {
+    Python::attach(|py| {
+        if !async_app_start.is_none(py) {
+            match async_app_start.call0(py) {
+                Ok(co) => {
+                    match py_asyncio::into_future_with_locals(
+                        local_event_loop_task,
+                        co.into_bound(py),
+                    ) {
+                        Ok(co_fut) => {
+                            runtime_handler.spawn(async move {
+                                if let Err(err) = co_fut.await {
+                                    println!(
+                                        "Error: Failed to run async app start handler (reason) -> {}",
+                                        err
+                                    );
+                                    std::process::exit(1);
+                                }
+                            });
+                        }
+                        Err(err) => {
+                            println!("Failed to start the application {}", err);
+                            return;
+                        }
+                    }
+                }
+                Err(err) => {
+                    println!("Failed to start the application {}", err);
+                    return;
+                }
+            }
+        }
+    });
 }
 
 #[pymodule]

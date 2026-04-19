@@ -1,2 +1,2 @@
 from .plugin import *
-from .slime import Slime
+from .slime import *

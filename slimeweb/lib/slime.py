@@ -934,8 +934,12 @@ class Slime:
 
         if not isinstance(workers, int):
             raise ValueError("worker needs to be in int type")
+        async_app_start: Callable | None = None
         if self.__app_start is not None:
-            self.__app_start()
+            if inspect.iscoroutinefunction(self.__app_start):
+                async_app_start = self.__app_start
+            else:
+                self.__app_start()
 
         from . import web_extras
 
@@ -949,6 +953,7 @@ class Slime:
                 app_state,
                 workers,
                 web_extras.slime_async_pipeline,
+                async_app_start,
             )
         except Exception as e:
             if self.__app_end is not None:

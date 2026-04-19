@@ -1,10 +1,10 @@
 import asyncio
 
-from lib import slime
+from lib import Slime, SlimeCompression, SlimeDocs, SlimeMiddleware
 from lib.plugin.cors import Cors
 from pydantic import BaseModel
 
-app = slime.Slime(__file__)
+app = Slime(__file__)
 
 
 class Student(BaseModel):
@@ -13,7 +13,7 @@ class Student(BaseModel):
     marks: int
 
 
-class SampleMiddle(slime.SlimeMiddleware):
+class SampleMiddle(SlimeMiddleware):
     def middle_before(self, req, resp):
         resp.set_header("plugin_before", "works")
 
@@ -41,9 +41,7 @@ def chatty(req, resp):
     resp.on_close(close_me)
 
 
-@app.route(
-    path="/plain", method="GET", compression=slime.SlimeCompression.Gzip, comp_level=9
-)
+@app.route(path="/plain", method="GET", compression=SlimeCompression.Gzip, comp_level=9)
 def land_plain(req, resp):
     return resp.plain("ok" * 3000)
 
@@ -128,7 +126,9 @@ def upload_test(req, resp):
 
 
 @app.start()
-def start_app():
+async def start_app():
+    await asyncio.sleep(2)
+    raise Exception("hello world")
     print("app has been started")
 
 
