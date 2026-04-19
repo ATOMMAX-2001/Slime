@@ -636,19 +636,12 @@ impl SlimeServer {
             };
 
             if compression != 0 {
-                let mut new_compression = CompressionLayer::new();
-                match compression {
-                    1 => {
-                        new_compression = new_compression.gzip(true);
-                    }
-                    2 => {
-                        new_compression = new_compression.br(true);
-                    }
-                    3 => {
-                        new_compression = new_compression.zstd(true);
-                    }
-                    _ => {}
-                }
+                let mut new_compression = match compression {
+                    1 => CompressionLayer::new().gzip(true),
+                    2 => CompressionLayer::new().br(true),
+                    3 => CompressionLayer::new().zstd(true),
+                    _ => CompressionLayer::new(),
+                };
                 new_compression =
                     new_compression.quality(tower_http::CompressionLevel::Precise(comp_level));
                 method_router = method_router.layer(new_compression);

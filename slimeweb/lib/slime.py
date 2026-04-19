@@ -22,6 +22,7 @@ class SlimeCompression(Enum):
     Gzip = 1
     Brotli = 2
     Zstd = 3
+    All = 4
 
 
 class SlimeMiddleware:
