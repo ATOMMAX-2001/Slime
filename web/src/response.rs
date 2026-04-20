@@ -313,6 +313,11 @@ impl Clone for SlimeWebSocketResponse {
 #[pymethods]
 impl SlimeWebSocketResponse {
     #[getter]
+    fn status(&self) -> PyResult<u16> {
+        return Ok(200);
+    }
+
+    #[getter]
     fn id(&self) -> PyResult<String> {
         return Ok(self.conn.id.to_string());
     }
@@ -330,7 +335,20 @@ impl SlimeWebSocketResponse {
         return Ok(());
     }
 
-    fn send(&self, py: Python, message: Py<PyAny>) -> PyResult<()> {
+    fn send_text(&self, message: String) -> PyResult<()> {
+        if let Err(err) = self.conn.sender.try_send(Bytes::from(message)) {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(err.to_string()));
+        }
+        return Ok(());
+    }
+    fn send_bytes(&self, message: Vec<u8>) -> PyResult<()> {
+        if let Err(err) = self.conn.sender.try_send(Bytes::from(message)) {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(err.to_string()));
+        }
+        return Ok(());
+    }
+
+    fn send_json(&self, py: Python, message: Py<PyAny>) -> PyResult<()> {
         let value: serde_json::Value = depythonize(message.bind(py))?;
         let json_str = serde_json::to_string(&value).map_err(|err| {
             return PyErr::new::<pyo3::exceptions::PyException, _>(format!(

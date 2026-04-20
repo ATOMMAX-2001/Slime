@@ -318,11 +318,22 @@ impl SlimeServer {
         Ok(())
     }
 
-    fn set_server_routes(&self) -> Router<WebSocketConnectionBook> {
+    fn set_server_routes(&self, static_path: String) -> Router<WebSocketConnectionBook> {
         let mut server_router = Router::new();
-        let static_dir = OsPath::new(&self.filename).parent().unwrap().join("static");
+        let relative_path = OsPath::new(&self.filename)
+            .parent()
+            .unwrap()
+            .join(&static_path);
+        let static_dir = if relative_path.exists() {
+            relative_path
+        } else {
+            OsPath::new(&static_path).to_path_buf()
+        };
+
         let static_service = ServeDir::new(static_dir);
-        server_router = server_router.nest_service("/static", static_service);
+        server_router = server_router
+            .nest_service("/static", static_service)
+            .layer(CompressionLayer::new());
         for route in &self.routes {
             let route = route.clone();
             let path = route.path;
@@ -652,9 +663,9 @@ impl SlimeServer {
         return server_router;
     }
 
-    pub async fn server_run(self) -> PyResult<()> {
+    pub async fn server_run(self, static_path: String) -> PyResult<()> {
         let address: SocketAddr = format!("{}:{}", self.host, self.port).parse()?;
-        let server_router = self.set_server_routes();
+        let server_router = self.set_server_routes(static_path);
         let listener = TcpListener::bind(address).await?;
 
         println!("Slime server is running at http://{}", address);
@@ -784,7 +795,7 @@ async fn websocket_handler(
                                     if let Err(err) =
                                         handler_func.call1(py, (PyBytes::new(py, &data),))
                                     {
-                                        if let Some(handler_func) = &(*resp.on_close_handler) {
+                                        if let Some(handler_func) = &(*resp.on_error_handler) {
                                             if let Err(err) = handler_func.call1(py, (err,)) {
                                                 error_handler(
                                                     err,

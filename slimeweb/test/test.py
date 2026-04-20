@@ -27,8 +27,11 @@ def chatty(req, resp):
     # await asyncio.sleep(1)
 
     def read_me(msg):
+        print(type(msg))
         if not resp.is_closed():
-            resp.send(msg)
+            if isinstance(msg, bytes):
+                return resp.send_bytes(msg)
+            return resp.send_text(msg)
 
     resp.on_message(read_me)
 
@@ -145,4 +148,5 @@ if __name__ == "__main__":
     # app.use(SampleMiddle(), method=["GET", "POST"])
     app.use(Cors())
     app.use(ReqLog(log_kind="stream"))
-    app.serve(app_state={"counter": 0})
+
+    app.serve(app_state={"counter": 0}, static_path="templates")

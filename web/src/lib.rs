@@ -31,6 +31,7 @@ pub fn init_web(
     workers: usize,
     async_pipeline: Py<PyAny>,
     async_app_start: Py<PyAny>,
+    static_path: String,
 ) -> PyResult<()> {
     println!("Initializing...");
     let slime_obj_bound = slime_obj.bind(py);
@@ -134,7 +135,7 @@ pub fn init_web(
 
     server.load_routes(routes)?;
 
-    py.detach(|| runtime.block_on(server.server_run()))?;
+    py.detach(|| runtime.block_on(server.server_run(static_path)))?;
     Ok(())
 }
 
