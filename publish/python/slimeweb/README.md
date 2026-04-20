@@ -660,7 +660,9 @@ These are available from the slimeweb package. Please check the **API** referenc
    resp.on_message(handler: Callable) -> None
    resp.on_close(handler: Callable) -> None
    resp.on_error(handler: Callable) -> None
-   resp.send(data: any) # any Pyobject that we can serialize
+   resp.send_text(data: any) 
+   resp.send_bytes(data: any) 
+   resp.send_json(data: any) # any Pyobject that we can serialize
    resp.is_closed() -> bool
   
 ```
@@ -762,7 +764,8 @@ from slimeweb import QuerySchema,BodySchema
      secret_key: str,
      dev: bool,
      app_state: Dict[str,Any],
-     workers: int
+     workers: int,
+     static_path: str  # it first check relative path and then consider as absolute path.
  )
 
 ```

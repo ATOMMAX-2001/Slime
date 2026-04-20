@@ -6,7 +6,7 @@ use axum::{
     body::{Body, to_bytes},
     extract::{
         ConnectInfo, FromRequest, State,
-        ws::{Message, WebSocketUpgrade},
+        ws::{Message, Utf8Bytes, WebSocketUpgrade},
     },
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
@@ -139,10 +139,15 @@ pub struct PyAsyncRequest {
     pub worker: mpsc::Sender<PyRequestWorker>,
 }
 
+pub enum WebSocketMessageType {
+    MessageText(String),
+    MessageBytes(Bytes),
+}
+
 #[derive(Clone)]
 pub struct WebSocketConn {
     pub id: Uuid,
-    pub sender: mpsc::Sender<Bytes>,
+    pub sender: mpsc::Sender<WebSocketMessageType>,
 }
 
 pub struct PyRequestWebSocket {
@@ -699,7 +704,7 @@ async fn websocket_handler(
     ws.on_upgrade(async move |socket| {
         {
             let id = Uuid::new_v4();
-            let (ws_tx, mut ws_rx) = mpsc::channel::<Bytes>(1024);
+            let (ws_tx, mut ws_rx) = mpsc::channel::<WebSocketMessageType>(1024);
 
             let web_conn = WebSocketConn { id, sender: ws_tx };
             state.add_conn(web_conn.clone());
@@ -709,9 +714,21 @@ async fn websocket_handler(
             // send message
             let send_message_handler = tok_hand.spawn(async move {
                 while let Some(msg) = ws_rx.recv().await {
-                    if let Err(err) = sender.send(Message::Binary(msg)).await {
-                        println!("Websocket send ERROR: {}", err.to_string());
-                        break;
+                    match msg {
+                        WebSocketMessageType::MessageBytes(msg_data) => {
+                            if let Err(err) = sender.send(Message::Binary(msg_data)).await {
+                                println!("Websocket send ERROR: {}", err.to_string());
+                                break;
+                            }
+                        }
+                        WebSocketMessageType::MessageText(msg_data) => {
+                            if let Err(err) =
+                                sender.send(Message::Text(Utf8Bytes::from(msg_data))).await
+                            {
+                                println!("Websocket send ERROR: {}", err.to_string());
+                                break;
+                            }
+                        }
                     }
                 }
             });

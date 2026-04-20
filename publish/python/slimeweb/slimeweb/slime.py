@@ -925,6 +925,7 @@ class Slime:
         dev: bool = False,
         app_state: Dict[str, Any] = {},
         workers: int = 0,
+        static_path: str = "static",
     ) -> None:
         if dev and len(self.__docs) != 0:
             self.generate_docs()
@@ -936,6 +937,10 @@ class Slime:
 
         if not isinstance(workers, int):
             raise ValueError("worker needs to be in int type")
+
+        if not isinstance(static_path, str):
+            raise ValueError("static path needs to be str type")
+
         async_app_start: Callable | None = None
         if self.__app_start is not None:
             if inspect.iscoroutinefunction(self.__app_start):
@@ -956,6 +961,7 @@ class Slime:
                 workers,
                 web_extras.slime_async_pipeline,
                 async_app_start,
+                static_path,
             )
         except Exception as e:
             if self.__app_end is not None:

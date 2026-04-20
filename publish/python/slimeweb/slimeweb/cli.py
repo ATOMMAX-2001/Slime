@@ -10,7 +10,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-__version__ = "0.2.1"
+__version__ = "0.2.3"
 
 
 def create_project(name: str):

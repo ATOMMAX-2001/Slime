@@ -20,7 +20,9 @@ use sha2::Sha256;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use crate::{constant::SERVER as CONST_SERVER, server::WebSocketConn};
+use crate::{
+    constant::SERVER as CONST_SERVER, server::WebSocketConn, server::WebSocketMessageType,
+};
 
 #[pyclass]
 pub struct SlimeStreamResponse {
@@ -336,13 +338,21 @@ impl SlimeWebSocketResponse {
     }
 
     fn send_text(&self, message: String) -> PyResult<()> {
-        if let Err(err) = self.conn.sender.try_send(Bytes::from(message)) {
+        if let Err(err) = self
+            .conn
+            .sender
+            .try_send(WebSocketMessageType::MessageText(message))
+        {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(err.to_string()));
         }
         return Ok(());
     }
     fn send_bytes(&self, message: Vec<u8>) -> PyResult<()> {
-        if let Err(err) = self.conn.sender.try_send(Bytes::from(message)) {
+        if let Err(err) = self
+            .conn
+            .sender
+            .try_send(WebSocketMessageType::MessageBytes(Bytes::from(message)))
+        {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(err.to_string()));
         }
         return Ok(());
@@ -356,7 +366,10 @@ impl SlimeWebSocketResponse {
                 err
             ));
         })?;
-        let _ = self.conn.sender.try_send(json_str.into());
+        let _ = self
+            .conn
+            .sender
+            .try_send(WebSocketMessageType::MessageText(json_str));
 
         return Ok(());
     }
