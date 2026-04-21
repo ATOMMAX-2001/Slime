@@ -45,6 +45,11 @@ def chatty(req, resp):
     resp.on_close(close_me)
 
 
+@app.route(path="/plaint", method="GET")
+def land_plaint(req, resp):
+    return resp.plain("ok")
+
+
 @app.route(path="/plain", method="GET", compression=SlimeCompression.Gzip, comp_level=9)
 def land_plain(req, resp):
     return resp.plain("ok" * 3000)
@@ -146,7 +151,7 @@ def end_app(args):
 
 if __name__ == "__main__":
     # app.use(SampleMiddle(), method=["GET", "POST"])
-    app.use(Cors())
-    app.use(ReqLog(log_kind="stream"))
+    # app.use(Cors())
+    # app.use(ReqLog(log_kind="stream"))
 
-    app.serve(app_state={"counter": 0}, static_path="templates")
+    app.serve(app_state={"counter": 0})

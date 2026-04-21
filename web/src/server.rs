@@ -335,10 +335,11 @@ impl SlimeServer {
             OsPath::new(&static_path).to_path_buf()
         };
 
-        let static_service = ServeDir::new(static_dir);
-        server_router = server_router
-            .nest_service("/static", static_service)
-            .layer(CompressionLayer::new());
+        let static_service = ServeDir::new(static_dir)
+            .precompressed_gzip()
+            .precompressed_br()
+            .precompressed_zstd();
+        server_router = server_router.nest_service("/static", static_service);
         for route in &self.routes {
             let route = route.clone();
             let path = route.path;
