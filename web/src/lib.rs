@@ -50,7 +50,7 @@ pub fn init_web(
     } else {
         match std::env::var("SLIME_WORKER") {
             Ok(data) => data.parse::<usize>().unwrap_or(no_of_cpu),
-            Err(_) => no_of_cpu,
+            Err(_) => (no_of_cpu / 2) + 2,
         }
     };
 

@@ -138,10 +138,10 @@ def upload_test(req, resp):
     return resp.plain(str(result))
 
 
-@app.start()
-async def start_app():
-    await asyncio.sleep(2)
-    print("app has been started")
+# @app.start()
+# async def start_app():
+#     await asyncio.sleep(2)
+#     print("app has been started")
 
 
 @app.end()
