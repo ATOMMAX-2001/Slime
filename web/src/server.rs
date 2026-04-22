@@ -142,6 +142,7 @@ pub struct PyAsyncRequest {
 pub enum WebSocketMessageType {
     MessageText(String),
     MessageBytes(Bytes),
+    MessagePing(Bytes),
 }
 
 #[derive(Clone)]
@@ -706,7 +707,7 @@ async fn websocket_handler(
         {
             let id = Uuid::new_v4();
             let (ws_tx, mut ws_rx) = mpsc::channel::<WebSocketMessageType>(1024);
-
+            let ws_tx_clone = ws_tx.clone();
             let web_conn = WebSocketConn { id, sender: ws_tx };
             state.add_conn(web_conn.clone());
 
@@ -726,6 +727,12 @@ async fn websocket_handler(
                             if let Err(err) =
                                 sender.send(Message::Text(Utf8Bytes::from(msg_data))).await
                             {
+                                println!("Websocket send ERROR: {}", err.to_string());
+                                break;
+                            }
+                        }
+                        WebSocketMessageType::MessagePing(msg_data) => {
+                            if let Err(err) = sender.send(Message::Pong(msg_data)).await {
                                 println!("Websocket send ERROR: {}", err.to_string());
                                 break;
                             }
@@ -809,20 +816,17 @@ async fn websocket_handler(
                                 state.remove_conn(id);
                             }
                             Message::Ping(data) => {
-                                if let Some(handler_func) = &(*resp.on_message_handler) {
-                                    if let Err(err) =
-                                        handler_func.call1(py, (PyBytes::new(py, &data),))
-                                    {
-                                        if let Some(handler_func) = &(*resp.on_error_handler) {
-                                            if let Err(err) = handler_func.call1(py, (err,)) {
-                                                error_handler(
-                                                    err,
-                                                    resp.on_error_handler.clone(),
-                                                    &py,
-                                                );
-                                            }
-                                        }
-                                    }
+                                if let Err(err) = ws_tx_clone
+                                    .blocking_send(WebSocketMessageType::MessagePing(data))
+                                {
+                                    error_handler(
+                                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                            "Ping Error: {}",
+                                            err
+                                        )),
+                                        resp.on_error_handler.clone(),
+                                        &py,
+                                    );
                                 }
                             }
                             _ => {}
@@ -850,7 +854,7 @@ pub fn spawn_python_workers(
         let runtime_handler_clone = runtime_handler.clone();
         let async_pipeline_clone = async_pipeline.clone();
         let task_local_clone = local_event_loop_task.clone();
-        let (tx, rx) = mpsc::channel::<PyRequestWorker>(1024 * 1024 * 10);
+        let (tx, rx) = mpsc::channel::<PyRequestWorker>(5024);
         worker_txs.push(tx);
         pool.spawn(move || {
             handle_python_call(
