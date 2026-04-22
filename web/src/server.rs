@@ -788,7 +788,26 @@ async fn websocket_handler(
                             }
                             return true;
                         };
+
                     while let Some(Ok(msg)) = receiver.next().await {
+                        if let Message::Ping(data) = msg {
+                            if let Err(err) = ws_tx_clone
+                                .send(WebSocketMessageType::MessagePing(data))
+                                .await
+                            {
+                                Python::attach(|py| {
+                                    error_handler(
+                                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                            "PING Error: {}",
+                                            err
+                                        )),
+                                        resp.on_error_handler.clone(),
+                                        &py,
+                                    )
+                                });
+                            }
+                            continue;
+                        }
                         Python::attach(|py| match msg {
                             Message::Binary(data) => {
                                 if let Some(handler_func) = &(*resp.on_message_handler) {
@@ -814,20 +833,6 @@ async fn websocket_handler(
                                     }
                                 }
                                 state.remove_conn(id);
-                            }
-                            Message::Ping(data) => {
-                                if let Err(err) = ws_tx_clone
-                                    .blocking_send(WebSocketMessageType::MessagePing(data))
-                                {
-                                    error_handler(
-                                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                            "Ping Error: {}",
-                                            err
-                                        )),
-                                        resp.on_error_handler.clone(),
-                                        &py,
-                                    );
-                                }
                             }
                             _ => {}
                         });
