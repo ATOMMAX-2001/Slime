@@ -963,8 +963,9 @@ class Slime:
             else:
                 self.__app_start()
 
-        if not isinstance(https, SlimeTls):
-            raise ValueError("https expects SlimeTls")
+        if https is not None:
+            if not isinstance(https, SlimeTls):
+                raise ValueError("https expects SlimeTls")
 
         from . import web_extras
 
@@ -980,7 +981,7 @@ class Slime:
                 web_extras.slime_async_pipeline,
                 async_app_start,
                 static_path,
-                (https.cert, https.key),
+                (https.cert, https.key) if https is not None else None,
                 worker_queue_size,
             )
         except Exception as e:

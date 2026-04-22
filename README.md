@@ -59,7 +59,7 @@ Minimal setup, powerful features, and a smooth developer experience from start t
 - Custom headers
 - JSON / HTML / raw responses
 - Templates rendering with context
-- Static serving
+- Static serving (with precompress lookup and compression)
 - Hot reload
 - WebSocket
 - App state
@@ -67,6 +67,7 @@ Minimal setup, powerful features, and a smooth developer experience from start t
 - Middleware plugin
 - Generate docs
 - Dynamic body read size constraint
+- HTTPS/WSS support
 
 
 ---
@@ -211,7 +212,7 @@ To start the Slime server we should use **server()** method.
 You can control the number of workers using the **SLIME_WORKER** environment variable.
 
 - In development mode, it defaults to 1 worker
-- In production, it automatically uses the number of CPU cores
+- In production, it automatically uses the number of ((CPU/2)+2) cores. This calculation result is used for async and sync thread pool
 
 ```bash
  export SLIME_WORKER=3
@@ -496,7 +497,10 @@ def chatty(req, resp):
 
     def read_me(msg):
         if not resp.is_closed():
-            resp.send(msg)    
+            if isinstance(msg,str):
+                resp.send_text(msg)    
+            else:
+                resp.send_bytes(msg)
 
     def close_me():
         print("Connection closed")
@@ -754,6 +758,19 @@ from slimeweb import QuerySchema,BodySchema
     
 ```
 
+### SlimeTls
+
+```python
+
+from slimeweb import SlimeTls 
+ 
+ SlimeTls(
+     cert: str, #.pem path
+     key: str  #.pem path
+ )
+    
+```
+
 
 ### SlimeServer
 
@@ -766,6 +783,8 @@ from slimeweb import QuerySchema,BodySchema
      app_state: Dict[str,Any],
      workers: int,
      static_path: str  # it first check relative path and then consider as absolute path.
+     https: SlimeTls,
+     worker_queue_size: int #how many request can queue can handle for each worker
  )
 
 ```
@@ -775,7 +794,9 @@ from slimeweb import QuerySchema,BodySchema
 ### Benchmark
 [BenchMark Code with no-gil example:](https://github.com/Abilash2001/SlimeWeb/)
 
-![Slimeweb benchmark with no-gil](https://raw.githubusercontent.com/Abilash2001/SlimeWeb/main/bench/slimebench.png)
+![Slimeweb benchmark with no-gil in local setup](https://raw.githubusercontent.com/Abilash2001/SlimeWeb/main/bench/slimebench.png)
+
+![Slimeweb benchmark with no-gil in httparena stress test](https://www.http-arena.com/leaderboard/#v=composite&res=mem&lang=Python)
 
 
 ### License

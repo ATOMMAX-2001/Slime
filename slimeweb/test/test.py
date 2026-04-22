@@ -157,6 +157,6 @@ if __name__ == "__main__":
     app.serve(
         app_state={"counter": 0},
         https=SlimeTls(
-            cert="../../certs/localhost+2.pem", key="../../certs/localhost+2-key.pem"
+            cert="../../certs/localhost+1.pem", key="../../certs/localhost+1-key.pem"
         ),
     )

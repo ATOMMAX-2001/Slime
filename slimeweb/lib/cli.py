@@ -10,7 +10,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 
 
 def create_project(name: str):
@@ -24,9 +24,11 @@ def create_project(name: str):
 
     static_path = root / "static"
     template_path = root / "templates"
+    certs_path = root / "certs"
 
     static_path.mkdir(parents=True, exist_ok=True)
     template_path.mkdir(parents=True, exist_ok=True)
+    certs_path.mkdir(parents=True, exist_ok=True)
 
     script_path = root / "main.py"
 
