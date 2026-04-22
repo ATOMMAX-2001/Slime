@@ -21,7 +21,7 @@ use rayon::{ThreadPoolBuilder, yield_now};
 
 use axum::extract::Path;
 use minijinja::{AutoEscape, Environment, path_loader};
-use std::path::Path as OsPath;
+use std::path::{Path as OsPath, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -41,6 +41,7 @@ use crate::request::{SlimeFile, SlimeRequest};
 use crate::response::{SlimeResponse, SlimeStreamResponse, SlimeWebSocketResponse};
 use crate::{constant::SERVER, request::SlimeState};
 
+use axum_server::{Handle as Axum_Handle, tls_rustls::RustlsConfig};
 use futures_util::SinkExt;
 use pyo3_async_runtimes::{self as py_asyncio, TaskLocals};
 use std::collections::HashMap;
@@ -326,15 +327,7 @@ impl SlimeServer {
 
     fn set_server_routes(&self, static_path: String) -> Router<WebSocketConnectionBook> {
         let mut server_router = Router::new();
-        let relative_path = OsPath::new(&self.filename)
-            .parent()
-            .unwrap()
-            .join(&static_path);
-        let static_dir = if relative_path.exists() {
-            relative_path
-        } else {
-            OsPath::new(&static_path).to_path_buf()
-        };
+        let static_dir = get_file_path(&self.filename, &static_path);
 
         let static_service = ServeDir::new(static_dir)
             .precompressed_gzip()
@@ -670,9 +663,45 @@ impl SlimeServer {
         return server_router;
     }
 
-    pub async fn server_run(self, static_path: String) -> PyResult<()> {
+    pub async fn server_run(
+        self,
+        static_path: String,
+        tls_data: Option<(String, String)>,
+        runtime_handler: Handle,
+    ) -> PyResult<()> {
         let address: SocketAddr = format!("{}:{}", self.host, self.port).parse()?;
         let server_router = self.set_server_routes(static_path);
+
+        if tls_data.is_some() {
+            let tls_certs = tls_data.unwrap();
+
+            let tls_config = RustlsConfig::from_pem_file(
+                get_file_path(&self.filename, &tls_certs.0),
+                get_file_path(&self.filename, &tls_certs.1),
+            )
+            .await?;
+            let handler: Axum_Handle<SocketAddr> = axum_server::Handle::new();
+            runtime_handler.spawn({
+                let handle = handler.clone();
+                async move {
+                    shutdown_signal().await;
+                    handle.graceful_shutdown(Some(std::time::Duration::from_secs(1)));
+                }
+            });
+            println!("Slime server is running at https://{}", address);
+            axum_server::bind_rustls(address, tls_config)
+                .handle(handler)
+                .serve(
+                    server_router
+                        .with_state(WebSocketConnectionBook {
+                            connection: Arc::new(DashMap::with_capacity(5)),
+                        })
+                        .into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .await?;
+            return Ok(());
+        }
+
         let listener = TcpListener::bind(address).await?;
 
         println!("Slime server is running at http://{}", address);
@@ -692,6 +721,15 @@ impl SlimeServer {
 
 async fn shutdown_signal() {
     signal::ctrl_c().await.expect("Failed to listen for ctrl_c");
+}
+
+fn get_file_path(parent: &String, filename: &String) -> PathBuf {
+    let relative_path = OsPath::new(parent).parent().unwrap().join(filename);
+    return if relative_path.exists() {
+        relative_path
+    } else {
+        OsPath::new(filename).to_path_buf()
+    };
 }
 
 async fn websocket_handler(
@@ -848,6 +886,7 @@ pub fn spawn_python_workers(
     runtime_handler: Handle,
     async_pipeline: Arc<Py<PyAny>>,
     local_event_loop_task: TaskLocals,
+    worker_queue_size: usize,
 ) -> Arc<Vec<mpsc::Sender<PyRequestWorker>>> {
     let mut worker_txs = Vec::with_capacity(worker_count);
     let pool = ThreadPoolBuilder::new()
@@ -859,7 +898,7 @@ pub fn spawn_python_workers(
         let runtime_handler_clone = runtime_handler.clone();
         let async_pipeline_clone = async_pipeline.clone();
         let task_local_clone = local_event_loop_task.clone();
-        let (tx, rx) = mpsc::channel::<PyRequestWorker>(5024);
+        let (tx, rx) = mpsc::channel::<PyRequestWorker>(worker_queue_size);
         worker_txs.push(tx);
         pool.spawn(move || {
             handle_python_call(

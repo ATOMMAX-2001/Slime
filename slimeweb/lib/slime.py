@@ -25,6 +25,16 @@ class SlimeCompression(Enum):
     All = 4
 
 
+class SlimeTls:
+    def __init__(self, cert: str = "", key: str = ""):
+        if (not isinstance(cert, str) or not isinstance(key, str)) or (
+            cert == "" or key == ""
+        ):
+            raise ValueError("cert and key should be a path")
+        self.cert = cert
+        self.key = key
+
+
 class SlimeMiddleware:
     def middle_before(self, req, resp):
         pass
@@ -926,6 +936,8 @@ class Slime:
         app_state: Dict[str, Any] = {},
         workers: int = 0,
         static_path: str = "static",
+        https: SlimeTls | None = None,
+        worker_queue_size: int = 6000,
     ) -> None:
         if dev and len(self.__docs) != 0:
             self.generate_docs()
@@ -936,7 +948,10 @@ class Slime:
             secret_key = secrets.token_urlsafe(30)
 
         if not isinstance(workers, int):
-            raise ValueError("worker needs to be in int type")
+            raise ValueError("workers needs to be in int type")
+
+        if not isinstance(worker_queue_size, int):
+            raise ValueError("worker queue size needs to be in int type")
 
         if not isinstance(static_path, str):
             raise ValueError("static path needs to be str type")
@@ -947,6 +962,9 @@ class Slime:
                 async_app_start = self.__app_start
             else:
                 self.__app_start()
+
+        if not isinstance(https, SlimeTls):
+            raise ValueError("https expects SlimeTls")
 
         from . import web_extras
 
@@ -962,6 +980,8 @@ class Slime:
                 web_extras.slime_async_pipeline,
                 async_app_start,
                 static_path,
+                (https.cert, https.key),
+                worker_queue_size,
             )
         except Exception as e:
             if self.__app_end is not None:

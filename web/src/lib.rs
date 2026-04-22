@@ -32,6 +32,8 @@ pub fn init_web(
     async_pipeline: Py<PyAny>,
     async_app_start: Py<PyAny>,
     static_path: String,
+    tls_certs: Option<(String, String)>,
+    worker_queue_size: usize,
 ) -> PyResult<()> {
     println!("Initializing...");
     let slime_obj_bound = slime_obj.bind(py);
@@ -120,6 +122,7 @@ pub fn init_web(
         runtime_handler.clone(),
         Arc::new(async_pipeline),
         local_event_loop_task,
+        worker_queue_size,
     );
 
     let mut server = SlimeServer::new(
@@ -129,13 +132,13 @@ pub fn init_web(
         secret_key,
         slime_filename,
         is_dev,
-        runtime_handler,
+        runtime_handler.clone(),
         app_states,
     );
 
     server.load_routes(routes)?;
 
-    py.detach(|| runtime.block_on(server.server_run(static_path)))?;
+    py.detach(|| runtime.block_on(server.server_run(static_path, tls_certs, runtime_handler)))?;
     Ok(())
 }
 
