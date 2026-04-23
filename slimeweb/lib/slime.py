@@ -259,6 +259,10 @@ class Slime:
         # custom definition
         self.__docs: List[SlimeDocs] = []
 
+        # static route that rust will handle it
+
+        self.__static_response: Dict[str, Tuple[str, str, str]] = {}
+
         # app start and end
 
         self.__app_start: Callable | None = None
@@ -867,6 +871,46 @@ class Slime:
                 api["paths"][path.path][method.lower()] = copy.deepcopy(result)
         return api
 
+    def static_http_response(
+        self,
+        path: str = "/",
+        method: str | List[str] = "/",
+        response_body: str = "",
+        content_type: str = "text/plain",
+    ):
+        for route in self.__routes:
+            if route.path == path:
+                raise MultipleRouteException("Route already exist")
+        if self.__static_response.get(path) is not None:
+            raise MultipleRouteException("Static Route already exist")
+
+        global AVAILABLE_METHOD
+        if isinstance(method, str):
+            if method == "*":
+                for method_all in AVAILABLE_METHOD:
+                    self.__static_response[path + method_all] = (
+                        method_all,
+                        response_body,
+                        content_type,
+                    )
+            else:
+                for method_all in AVAILABLE_METHOD:
+                    self.__static_response[path + method_all] = (
+                        method_all,
+                        response_body,
+                        content_type,
+                    )
+        elif isinstance(method, list):
+            for meth in method:
+                if meth not in AVAILABLE_METHOD:
+                    raise MethodException(f"Invalid method {meth}")
+                else:
+                    self.__static_response[path + meth] = (
+                        meth,
+                        response_body,
+                        content_type,
+                    )
+
     def start(self):
         def wrapper(handler):
             if not callable(handler):
@@ -983,6 +1027,7 @@ class Slime:
                 static_path,
                 (https.cert, https.key) if https is not None else None,
                 worker_queue_size,
+                self.static_http_response,
             )
         except Exception as e:
             if self.__app_end is not None:

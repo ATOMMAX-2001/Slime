@@ -24,6 +24,23 @@ use crate::{
     constant::SERVER as CONST_SERVER, server::WebSocketConn, server::WebSocketMessageType,
 };
 
+pub fn build_static_response(response_body: &(String, String, String)) -> Response<Body> {
+    let result = Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, &response_body.2)
+        .header(SERVER, CONST_SERVER);
+    match result.body(Body::from(response_body.1.to_owned())) {
+        Ok(response) => return response,
+        Err(err) => {
+            let err_result = Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(SERVER, CONST_SERVER)
+                .header(CONTENT_TYPE, &response_body.2);
+            return err_result.body(Body::from(err.to_string())).unwrap();
+        }
+    };
+}
+
 #[pyclass]
 pub struct SlimeStreamResponse {
     pub content_type: String,

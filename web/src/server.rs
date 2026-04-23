@@ -38,7 +38,9 @@ use tower_http::{compression::CompressionLayer, services::ServeDir};
 use uuid::Uuid;
 
 use crate::request::{SlimeFile, SlimeRequest};
-use crate::response::{SlimeResponse, SlimeStreamResponse, SlimeWebSocketResponse};
+use crate::response::{
+    SlimeResponse, SlimeStreamResponse, SlimeWebSocketResponse, build_static_response,
+};
 use crate::{constant::SERVER, request::SlimeState};
 
 use axum_server::{Handle as Axum_Handle, tls_rustls::RustlsConfig};
@@ -325,7 +327,11 @@ impl SlimeServer {
         Ok(())
     }
 
-    fn set_server_routes(&self, static_path: String) -> Router<WebSocketConnectionBook> {
+    fn set_server_routes(
+        &self,
+        static_path: String,
+        static_response: HashMap<String, (String, String, String)>,
+    ) -> Router<WebSocketConnectionBook> {
         let mut server_router = Router::new();
         let static_dir = get_file_path(&self.filename, &static_path);
 
@@ -336,6 +342,7 @@ impl SlimeServer {
         server_router = server_router
             .nest_service("/static", static_service)
             .layer(CompressionLayer::new());
+
         for route in &self.routes {
             let route = route.clone();
             let path = route.path;
@@ -355,6 +362,7 @@ impl SlimeServer {
             let filename = self.filename.to_owned();
             let tokio_runtime = self.tokio_handler.clone();
             let slime_app_state = self.app_states.clone();
+            let final_static_response = static_response.clone();
             let request_type = if route.ws {
                 "ws"
             } else if stream_content.is_some() {
@@ -377,10 +385,18 @@ impl SlimeServer {
                     );
                     template_engine = Arc::new(SlimeServer::get_template_environment(&filename));
                 }
+
                 async move {
-                    if request.method().as_str() != method {
+                    let request_method = request.method().as_str();
+                    if request_method != method {
                         return StatusCode::METHOD_NOT_ALLOWED.into_response();
                     }
+                    if let Some(resp_body) =
+                        final_static_response.get(&format!("{}{}", &path, &method))
+                    {
+                        return build_static_response(&resp_body).into_response();
+                    }
+
                     let idx = request_counter.fetch_add(1, Ordering::Relaxed);
                     let worker_tx = &worker_txs[idx % worker_count];
 
@@ -670,9 +686,10 @@ impl SlimeServer {
         static_path: String,
         tls_data: Option<(String, String)>,
         runtime_handler: Handle,
+        static_response: HashMap<String, (String, String, String)>,
     ) -> PyResult<()> {
         let address: SocketAddr = format!("{}:{}", self.host, self.port).parse()?;
-        let server_router = self.set_server_routes(static_path);
+        let server_router = self.set_server_routes(static_path, static_response);
 
         if tls_data.is_some() {
             let tls_certs = tls_data.unwrap();

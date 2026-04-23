@@ -4,6 +4,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::types::PyModule;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::{Builder, Handle};
 
@@ -34,6 +35,7 @@ pub fn init_web(
     static_path: String,
     tls_certs: Option<(String, String)>,
     worker_queue_size: usize,
+    static_http_response: HashMap<String, (String, String, String)>,
 ) -> PyResult<()> {
     println!("Initializing...");
     let slime_obj_bound = slime_obj.bind(py);
@@ -124,7 +126,6 @@ pub fn init_web(
         local_event_loop_task,
         worker_queue_size,
     );
-
     let mut server = SlimeServer::new(
         host,
         port,
@@ -138,7 +139,14 @@ pub fn init_web(
 
     server.load_routes(routes)?;
 
-    py.detach(|| runtime.block_on(server.server_run(static_path, tls_certs, runtime_handler)))?;
+    py.detach(|| {
+        runtime.block_on(server.server_run(
+            static_path,
+            tls_certs,
+            runtime_handler,
+            static_http_response,
+        ))
+    })?;
     Ok(())
 }
 
