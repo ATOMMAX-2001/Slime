@@ -1027,7 +1027,7 @@ class Slime:
                 static_path,
                 (https.cert, https.key) if https is not None else None,
                 worker_queue_size,
-                self.static_http_response,
+                self.__static_response,
             )
         except Exception as e:
             if self.__app_end is not None:

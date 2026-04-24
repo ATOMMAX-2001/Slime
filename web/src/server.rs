@@ -543,6 +543,9 @@ impl SlimeServer {
                                 )
                                 .await
                                 .into_response();
+                            } else {
+                                return (StatusCode::BAD_REQUEST, "Expected upgradable request")
+                                    .into_response();
                             }
                         }
                         "stream" => {
