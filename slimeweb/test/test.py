@@ -149,6 +149,11 @@ def end_app(args):
     print("app has been ended")
 
 
+@app.static_route(path="/staroute", method="GET")
+def static_handler():
+    return "ook"
+
+
 if __name__ == "__main__":
     # app.use(SampleMiddle(), method=["GET", "POST"])
     # app.use(Cors())
@@ -156,7 +161,7 @@ if __name__ == "__main__":
 
     app.serve(
         app_state={"counter": 0},
-        https=SlimeTls(
-            cert="../../certs/localhost+1.pem", key="../../certs/localhost+1-key.pem"
-        ),
+        # https=SlimeTls(
+        #     cert="../../certs/localhost+1.pem", key="../../certs/localhost+1-key.pem"
+        # ),
     )

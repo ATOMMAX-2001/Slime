@@ -546,11 +546,13 @@ class Slime:
                 raise ValueError(
                     "Invalid Comp level for Brotli, Range is between 0 and 11"
                 )
-        else:
+        elif compression == SlimeCompression.Zstd:
             if comp_level < 1 or comp_level > 22:
                 raise ValueError(
                     "Invalid Comp level for Zstd, Range is between 1 and 22"
                 )
+        else:
+            pass
         if not isinstance(body_size, int):
             raise ValueError("body_size should be of type <int> represent bytes")
         new_route = Routes(path, method, stream, ws, compression, comp_level, body_size)
@@ -578,7 +580,7 @@ class Slime:
         stream: str | None = None,
         ws: bool = False,
         compression: SlimeCompression = SlimeCompression.NoCompression,
-        comp_level: int = 1,
+        comp_level: int = 0,
         body_size: int = 1024 * 1024 * 10,
         plugin: SlimeMiddleware | List[SlimeMiddleware] | None = None,
     ) -> Callable:
@@ -871,45 +873,92 @@ class Slime:
                 api["paths"][path.path][method.lower()] = copy.deepcopy(result)
         return api
 
-    def static_http_response(
+    def static_route(
         self,
         path: str = "/",
         method: str | List[str] = "/",
-        response_body: str = "",
         content_type: str = "text/plain",
+        body_size: int = 1024 * 1024 * 10,
+        compression: SlimeCompression = SlimeCompression.NoCompression,
+        comp_level: int = 0,
     ):
-        for route in self.__routes:
-            if route.path == path:
-                raise MultipleRouteException("Route already exist")
-        if self.__static_response.get(path) is not None:
-            raise MultipleRouteException("Static Route already exist")
+        def wrapper(static_handler) -> Callable:
+            if not callable(static_handler):
+                raise InvalidHandler("Expected a function")
+            response_result = static_handler()
+            if not isinstance(response_result, str):
+                error = f"{static_handler.__name__} expected to be return as <str> type"
+                raise ValueError(error)
+            for route in self.__routes:
+                if route.path == path:
+                    raise MultipleRouteException("Route already exist")
+            if self.__static_response.get(path) is not None:
+                raise MultipleRouteException("Static Route already exist")
 
-        global AVAILABLE_METHOD
-        if isinstance(method, str):
-            if method == "*":
-                for method_all in AVAILABLE_METHOD:
-                    self.__static_response[path + method_all] = (
-                        method_all,
-                        response_body,
-                        content_type,
-                    )
-            else:
-                for method_all in AVAILABLE_METHOD:
-                    self.__static_response[path + method_all] = (
-                        method_all,
-                        response_body,
-                        content_type,
-                    )
-        elif isinstance(method, list):
-            for meth in method:
-                if meth not in AVAILABLE_METHOD:
-                    raise MethodException(f"Invalid method {meth}")
+            global AVAILABLE_METHOD
+
+            def empty_handler():
+                return None
+
+            if isinstance(method, str):
+                if method == "*":
+                    for method_all in AVAILABLE_METHOD:
+                        self.__static_response[path + method_all] = (
+                            method_all,
+                            response_result,
+                            content_type,
+                        )
+                        self.__apply_route(
+                            handler=empty_handler,
+                            method=method_all,
+                            path=path,
+                            stream=None,
+                            ws=False,
+                            compression=compression,
+                            comp_level=comp_level,
+                            body_size=body_size,
+                        )
                 else:
-                    self.__static_response[path + meth] = (
-                        meth,
-                        response_body,
+                    self.__static_response[path + method] = (
+                        method,
+                        response_result,
                         content_type,
                     )
+                    self.__apply_route(
+                        handler=empty_handler,
+                        method=method,
+                        path=path,
+                        stream=None,
+                        ws=False,
+                        compression=compression,
+                        comp_level=comp_level,
+                        body_size=body_size,
+                    )
+            elif isinstance(method, list):
+                for meth in method:
+                    if meth not in AVAILABLE_METHOD:
+                        raise MethodException(f"Invalid method {meth}")
+                    else:
+                        self.__static_response[path + meth] = (
+                            meth,
+                            response_result,
+                            content_type,
+                        )
+                        self.__apply_route(
+                            handler=empty_handler,
+                            method=meth,
+                            path=path,
+                            stream=None,
+                            ws=False,
+                            compression=compression,
+                            comp_level=comp_level,
+                            body_size=body_size,
+                        )
+            else:
+                raise ValueError("Need method value in <str> type")
+            return static_handler
+
+        return wrapper
 
     def start(self):
         def wrapper(handler):
