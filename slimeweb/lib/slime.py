@@ -208,6 +208,7 @@ class Routes:
         compression: SlimeCompression = SlimeCompression.NoCompression,
         comp_level: int = 1,
         body_size: int = 1024 * 1024 * 10,
+        is_static: bool = False,
     ) -> None:
         global AVAILABLE_METHOD
         if method.upper() not in AVAILABLE_METHOD:
@@ -220,6 +221,7 @@ class Routes:
         self.compression: int = compression.value
         self.body_size: int = body_size
         self.comp_level: int = comp_level
+        self.is_static: bool = is_static
 
     def __hash__(self) -> int:
         return hash((self.path, self.method))
@@ -533,6 +535,7 @@ class Slime:
         compression: SlimeCompression,
         comp_level: int,
         body_size: int,
+        is_static: bool = False,
     ):
         if not isinstance(comp_level, int):
             raise ValueError("comp_level should be of type <int>")
@@ -555,7 +558,9 @@ class Slime:
             pass
         if not isinstance(body_size, int):
             raise ValueError("body_size should be of type <int> represent bytes")
-        new_route = Routes(path, method, stream, ws, compression, comp_level, body_size)
+        new_route = Routes(
+            path, method, stream, ws, compression, comp_level, body_size, is_static
+        )
 
         if new_route not in self.__routes:
             self.__routes[new_route] = {
@@ -917,6 +922,7 @@ class Slime:
                             compression=compression,
                             comp_level=comp_level,
                             body_size=body_size,
+                            is_static=True,
                         )
                 else:
                     self.__static_response[path + method] = (
@@ -933,6 +939,7 @@ class Slime:
                         compression=compression,
                         comp_level=comp_level,
                         body_size=body_size,
+                        is_static=True,
                     )
             elif isinstance(method, list):
                 for meth in method:
@@ -953,6 +960,7 @@ class Slime:
                             compression=compression,
                             comp_level=comp_level,
                             body_size=body_size,
+                            is_static=True,
                         )
             else:
                 raise ValueError("Need method value in <str> type")

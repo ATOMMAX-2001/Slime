@@ -58,6 +58,7 @@ pub struct Route {
     pub body_size: usize,
     pub handler: Arc<Vec<Py<PyAny>>>,
     pub is_async: bool,
+    pub is_static: bool,
 }
 
 impl Clone for Route {
@@ -72,6 +73,7 @@ impl Clone for Route {
             body_size: self.body_size,
             handler: self.handler.clone(),
             is_async: self.is_async,
+            is_static: self.is_static,
         }
     }
 }
@@ -87,6 +89,7 @@ impl Route {
         body_size: usize,
         handler: Vec<Py<PyAny>>,
         is_async: bool,
+        is_static: bool,
     ) -> Self {
         Self {
             path,
@@ -98,6 +101,7 @@ impl Route {
             body_size,
             handler: Arc::new(handler),
             is_async: is_async,
+            is_static: is_static,
         }
     }
 }
@@ -261,6 +265,7 @@ impl SlimeServer {
             let compression: u8 = key.getattr("compression")?.extract()?;
             let comp_level: i32 = key.getattr("comp_level")?.extract()?;
             let body_size: usize = key.getattr("body_size")?.extract()?;
+            let is_static: bool = key.getattr("is_static")?.extract()?;
             let handler = value.cast::<PyDict>()?;
             let mut handlers: Vec<Py<PyAny>> = Vec::with_capacity(3);
             let mut is_async = false;
@@ -321,6 +326,7 @@ impl SlimeServer {
                 body_size,
                 handlers,
                 is_async,
+                is_static,
             ));
         }
         self.routes = routes_collection;
@@ -353,6 +359,7 @@ impl SlimeServer {
             let compression = route.compression;
             let comp_level = route.comp_level;
             let body_size = route.body_size;
+            let is_static = route.is_static;
             let worker_txs = self.worker_txs.clone();
             let request_counter = self.request_counter.clone();
             let worker_count = worker_txs.len();
@@ -391,10 +398,12 @@ impl SlimeServer {
                     if request_method != method {
                         return StatusCode::METHOD_NOT_ALLOWED.into_response();
                     }
-                    if let Some(resp_body) =
-                        final_static_response.get(&format!("{}{}", &path, &method))
-                    {
-                        return build_static_response(&resp_body).into_response();
+                    if is_static {
+                        if let Some(resp_body) =
+                            final_static_response.get(&format!("{}{}", &path, &method))
+                        {
+                            return build_static_response(&resp_body).into_response();
+                        }
                     }
 
                     let idx = request_counter.fetch_add(1, Ordering::Relaxed);
