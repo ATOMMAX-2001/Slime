@@ -208,6 +208,7 @@ class Routes:
         compression: SlimeCompression = SlimeCompression.NoCompression,
         comp_level: int = 1,
         body_size: int = 1024 * 1024 * 10,
+        is_static: bool = False,
     ) -> None:
         global AVAILABLE_METHOD
         if method.upper() not in AVAILABLE_METHOD:
@@ -220,6 +221,7 @@ class Routes:
         self.compression: int = compression.value
         self.body_size: int = body_size
         self.comp_level: int = comp_level
+        self.is_static: bool = is_static
 
     def __hash__(self) -> int:
         return hash((self.path, self.method))
@@ -258,6 +260,10 @@ class Slime:
         # to generate swagger docs user can  create
         # custom definition
         self.__docs: List[SlimeDocs] = []
+
+        # static route that rust will handle it
+
+        self.__static_response: Dict[str, Tuple[str, str, str]] = {}
 
         # app start and end
 
@@ -529,6 +535,7 @@ class Slime:
         compression: SlimeCompression,
         comp_level: int,
         body_size: int,
+        is_static: bool = False,
     ):
         if not isinstance(comp_level, int):
             raise ValueError("comp_level should be of type <int>")
@@ -542,14 +549,18 @@ class Slime:
                 raise ValueError(
                     "Invalid Comp level for Brotli, Range is between 0 and 11"
                 )
-        else:
+        elif compression == SlimeCompression.Zstd:
             if comp_level < 1 or comp_level > 22:
                 raise ValueError(
                     "Invalid Comp level for Zstd, Range is between 1 and 22"
                 )
+        else:
+            pass
         if not isinstance(body_size, int):
             raise ValueError("body_size should be of type <int> represent bytes")
-        new_route = Routes(path, method, stream, ws, compression, comp_level, body_size)
+        new_route = Routes(
+            path, method, stream, ws, compression, comp_level, body_size, is_static
+        )
 
         if new_route not in self.__routes:
             self.__routes[new_route] = {
@@ -574,7 +585,7 @@ class Slime:
         stream: str | None = None,
         ws: bool = False,
         compression: SlimeCompression = SlimeCompression.NoCompression,
-        comp_level: int = 1,
+        comp_level: int = 0,
         body_size: int = 1024 * 1024 * 10,
         plugin: SlimeMiddleware | List[SlimeMiddleware] | None = None,
     ) -> Callable:
@@ -867,6 +878,95 @@ class Slime:
                 api["paths"][path.path][method.lower()] = copy.deepcopy(result)
         return api
 
+    def static_route(
+        self,
+        path: str = "/",
+        method: str | List[str] = "/",
+        content_type: str = "text/plain",
+        compression: SlimeCompression = SlimeCompression.NoCompression,
+        comp_level: int = 0,
+    ):
+        def wrapper(static_handler) -> Callable:
+            if not callable(static_handler):
+                raise InvalidHandler("Expected a function")
+            response_result = static_handler()
+            if not isinstance(response_result, str):
+                error = f"{static_handler.__name__} expected to be return as <str> type"
+                raise ValueError(error)
+            for route in self.__routes:
+                if route.path == path:
+                    raise MultipleRouteException("Route already exist")
+            if self.__static_response.get(path) is not None:
+                raise MultipleRouteException("Static Route already exist")
+
+            global AVAILABLE_METHOD
+
+            def empty_handler():
+                return None
+
+            if isinstance(method, str):
+                if method == "*":
+                    for method_all in AVAILABLE_METHOD:
+                        self.__static_response[path + method_all] = (
+                            method_all,
+                            response_result,
+                            content_type,
+                        )
+                        self.__apply_route(
+                            handler=empty_handler,
+                            method=method_all,
+                            path=path,
+                            stream=None,
+                            ws=False,
+                            compression=compression,
+                            comp_level=comp_level,
+                            body_size=0,
+                            is_static=True,
+                        )
+                else:
+                    self.__static_response[path + method] = (
+                        method,
+                        response_result,
+                        content_type,
+                    )
+                    self.__apply_route(
+                        handler=empty_handler,
+                        method=method,
+                        path=path,
+                        stream=None,
+                        ws=False,
+                        compression=compression,
+                        comp_level=comp_level,
+                        body_size=0,
+                        is_static=True,
+                    )
+            elif isinstance(method, list):
+                for meth in method:
+                    if meth not in AVAILABLE_METHOD:
+                        raise MethodException(f"Invalid method {meth}")
+                    else:
+                        self.__static_response[path + meth] = (
+                            meth,
+                            response_result,
+                            content_type,
+                        )
+                        self.__apply_route(
+                            handler=empty_handler,
+                            method=meth,
+                            path=path,
+                            stream=None,
+                            ws=False,
+                            compression=compression,
+                            comp_level=comp_level,
+                            body_size=0,
+                            is_static=True,
+                        )
+            else:
+                raise ValueError("Need method value in <str> type")
+            return static_handler
+
+        return wrapper
+
     def start(self):
         def wrapper(handler):
             if not callable(handler):
@@ -983,6 +1083,7 @@ class Slime:
                 static_path,
                 (https.cert, https.key) if https is not None else None,
                 worker_queue_size,
+                self.__static_response,
             )
         except Exception as e:
             if self.__app_end is not None:

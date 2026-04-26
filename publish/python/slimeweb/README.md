@@ -548,6 +548,17 @@ async def land(req, resp):
 ```
 
 
+### Static Route (Constant Response):
+ In Slime, you can define a path as a static route when its response never changes. In such cases, the response is served directly by Rust instead of being passed to the Python dispatcher. This will give more performance than setting as regular route.
+
+ ```python
+@app.static_route(path="/staroute", method="GET")
+def static_handler():
+    return "ook"
+ ```
+> **NOTE:** If a path is configured as static in Slime, it won’t process the request body, and no middleware will be applied to that route.
+
+
 ### Swagger Docs
 
 Slime can automatically generate Swagger documentation and serve it at the **/docs** endpoint when your server is running in development mode **(dev=True)**.
@@ -600,6 +611,40 @@ These are available from the slimeweb package. Please check the **API** referenc
 
 
 ## Api
+
+
+
+### Route
+```python
+    @app.static_route(
+        path: str ="/",
+        method: str|List[str] ="GET",
+        stream: str|None = None,
+        ws: bool =False,
+        body_size: int =1024*1024*10 #10MB,
+        compression: SlimeCompression =SlimeCompression.NoCompression,
+        comp_level: int =0
+        plugin: SlimeMiddleware| List[SlimeMiddleware]
+    )
+
+```
+
+
+
+
+### Static Route
+```python
+    @app.static_route(
+        path: str ="/",
+        method: str|List[str] ="GET",
+        content_type: str = "text/plain",
+        compression: SlimeCompression =SlimeCompression.NoCompression,
+        comp_level: int =0
+    )
+
+```
+
+
 
 ###  Slime Request
 ```python
@@ -656,6 +701,7 @@ These are available from the slimeweb package. Please check the **API** referenc
   resp.close() # close stream
   
 ```
+
 
 
 ### Websocket Slime Response
@@ -792,11 +838,12 @@ from slimeweb import SlimeTls
 
 
 ### Benchmark
-[BenchMark Code with no-gil example:](https://github.com/Abilash2001/SlimeWeb/)
+- [BenchMark Code with no-gil example:](https://github.com/Abilash2001/SlimeWeb/)
 
 ![Slimeweb benchmark with no-gil in local setup](https://raw.githubusercontent.com/Abilash2001/SlimeWeb/main/bench/slimebench.png)
 
-![Slimeweb benchmark with no-gil in httparena stress test](https://www.http-arena.com/leaderboard/#v=composite&res=mem&lang=Python)
+
+- [Slimeweb benchmark with no-gil in httparena stress test](https://www.http-arena.com/leaderboard/#v=composite&res=mem&lang=Python)
 
 
 ### License

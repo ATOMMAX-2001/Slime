@@ -883,7 +883,6 @@ class Slime:
         path: str = "/",
         method: str | List[str] = "/",
         content_type: str = "text/plain",
-        body_size: int = 1024 * 1024 * 10,
         compression: SlimeCompression = SlimeCompression.NoCompression,
         comp_level: int = 0,
     ):
@@ -921,7 +920,7 @@ class Slime:
                             ws=False,
                             compression=compression,
                             comp_level=comp_level,
-                            body_size=body_size,
+                            body_size=0,
                             is_static=True,
                         )
                 else:
@@ -938,7 +937,7 @@ class Slime:
                         ws=False,
                         compression=compression,
                         comp_level=comp_level,
-                        body_size=body_size,
+                        body_size=0,
                         is_static=True,
                     )
             elif isinstance(method, list):
@@ -959,7 +958,7 @@ class Slime:
                             ws=False,
                             compression=compression,
                             comp_level=comp_level,
-                            body_size=body_size,
+                            body_size=0,
                             is_static=True,
                         )
             else:
