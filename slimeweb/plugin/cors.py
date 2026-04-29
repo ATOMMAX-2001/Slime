@@ -4,7 +4,7 @@
 
 from typing import List
 
-from ..slime import SlimeMiddleware
+from ..lib import SlimeMiddleware
 
 
 class Cors(SlimeMiddleware):

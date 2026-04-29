@@ -4,7 +4,7 @@
 
 import pydantic
 
-import web
+from ..web import server
 
 # for prod from .web import web
 
@@ -31,7 +31,7 @@ def validate_me(self, obj: pydantic.BaseModel, raise_err: bool = True):
         return result
 
 
-web.SlimeRequest.validate = validate_me  # type: ignore
+# web.SlimeRequest.validate = validate_me  # type: ignore
 
 
 async def slime_async_pipeline(handlers, req, resp):

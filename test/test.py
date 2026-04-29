@@ -1,9 +1,10 @@
 import asyncio
 
-from lib import Slime, SlimeCompression, SlimeDocs, SlimeMiddleware, SlimeTls
-from lib.plugin.cors import Cors
-from lib.plugin.logger import ReqLog
 from pydantic import BaseModel
+
+from slimeweb import Slime, SlimeCompression, SlimeDocs, SlimeMiddleware, SlimeTls
+from slimeweb.plugin.cors import Cors
+from slimeweb.plugin.logger import ReqLog
 
 app = Slime(__file__)
 
@@ -158,7 +159,6 @@ if __name__ == "__main__":
     # app.use(SampleMiddle(), method=["GET", "POST"])
     # app.use(Cors())
     # app.use(ReqLog(log_kind="stream"))
-
     app.serve(
         app_state={"counter": 0},
         https=SlimeTls(

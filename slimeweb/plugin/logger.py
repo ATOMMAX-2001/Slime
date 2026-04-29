@@ -4,7 +4,7 @@ import uuid
 from logging.handlers import TimedRotatingFileHandler
 from typing import Literal
 
-from ..slime import SlimeMiddleware
+from ..lib import SlimeMiddleware
 
 
 class ReqLog(SlimeMiddleware):

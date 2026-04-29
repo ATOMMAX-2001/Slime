@@ -1027,6 +1027,24 @@ class Slime:
         def land_api_schema(req, resp):
             return resp.json(api)
 
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/plain")],
+            }
+        )
+
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b"Hello from Slimes",
+            }
+        )
+
     def serve(
         self,
         host: str = "127.0.0.1",
@@ -1067,24 +1085,25 @@ class Slime:
             if not isinstance(https, SlimeTls):
                 raise ValueError("https expects SlimeTls")
 
-        from . import web_extras
+        from ..web import server
 
         try:
-            web_extras.web.init_web(
-                self,
-                host,
-                port,
-                secret_key,
-                dev,
-                app_state,
-                workers,
-                web_extras.slime_async_pipeline,
-                async_app_start,
-                static_path,
-                (https.cert, https.key) if https is not None else None,
-                worker_queue_size,
-                self.__static_response,
-            )
+            server.init_web(self)
+            # web_extras.server.init_web(
+            #     self,
+            #     host,
+            #     port,
+            #     secret_key,
+            #     dev,
+            #     app_state,
+            #     workers,
+            #     web_extras.slime_async_pipeline,
+            #     async_app_start,
+            #     static_path,
+            #     (https.cert, https.key) if https is not None else None,
+            #     worker_queue_size,
+            #     self.__static_response,
+            # )
         except Exception as e:
             if self.__app_end is not None:
                 self.__app_end(e)
