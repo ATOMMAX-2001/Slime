@@ -269,7 +269,6 @@ class Slime:
 
         self.__app_start: Callable | None = None
         self.__app_end: Callable | None = None
-        self.__workers: int = 1
         self.__route_tree = None
 
     def __apply_middleware(
@@ -1077,23 +1076,8 @@ class Slime:
         from ..web import server
 
         try:
-            self.__workers = workers
-            server.init_web(self)
-            # web_extras.server.init_web(
-            #     self,
-            #     host,
-            #     port,
-            #     secret_key,
-            #     dev,
-            #     app_state,
-            #     workers,
-            #     web_extras.slime_async_pipeline,
-            #     async_app_start,
-            #     static_path,
-            #     (https.cert, https.key) if https is not None else None,
-            #     worker_queue_size,
-            #     self.__static_response,
-            # )
+            server.init_web(self, host, port, workers)
+
         except Exception as e:
             if self.__app_end is not None:
                 self.__app_end(e)
