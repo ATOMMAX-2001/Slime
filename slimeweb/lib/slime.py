@@ -1028,22 +1028,9 @@ class Slime:
             return resp.json(api)
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            return
-        await send(
-            {
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [(b"content-type", b"text/plain")],
-            }
-        )
+        from ..web import server
 
-        await send(
-            {
-                "type": "http.response.body",
-                "body": b"Hello from Slimes",
-            }
-        )
+        await server.parse_request(scope, receive, send)
 
     def serve(
         self,
