@@ -269,6 +269,8 @@ class Slime:
 
         self.__app_start: Callable | None = None
         self.__app_end: Callable | None = None
+        self.__workers: int = 1
+        self.__route_tree = None
 
     def __apply_middleware(
         self,
@@ -1030,7 +1032,7 @@ class Slime:
     async def __call__(self, scope, receive, send):
         from ..web import server
 
-        await server.parse_request(scope, receive, send)
+        await server.parse_request(scope, receive, send, self)
 
     def serve(
         self,
@@ -1075,6 +1077,7 @@ class Slime:
         from ..web import server
 
         try:
+            self.__workers = workers
             server.init_web(self)
             # web_extras.server.init_web(
             #     self,
